@@ -27,10 +27,11 @@ from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
+from homeassistant.util import dt as dt_util
 
 from . import art, cards
 from .config_flow import thermostats
-from .const import (ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (CONF_GLANCE, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,7 +108,8 @@ async def _reload(hass: HomeAssistant, entry: FledgeConfigEntry) -> None:
     """Changed options: other devices start afresh; only what it wakes to
     (an automation's Wake to, say) is just sent on."""
     thermostat = getattr(entry, "runtime_data", None)
-    if thermostat is not None and list(entry.options.get(CONF_ENTITIES, [])) == thermostat.entities:
+    if (thermostat is not None and list(entry.options.get(CONF_ENTITIES, [])) == thermostat.entities
+            and entry.options.get(CONF_WEATHER) == thermostat.weather):
         await thermostat.async_wake_changed()
         return
     await hass.config_entries.async_reload(entry.entry_id)
@@ -166,6 +168,7 @@ class Thermostat:
         # Called as what it wakes to changes (the Wake to select).
         self.wake_listeners: list[Any] = []
         self.entities: list[str] = list(entry.options.get(CONF_ENTITIES, []))
+        self.weather: str | None = entry.options.get(CONF_WEATHER)
         self.serial = serial
         # Each media player's picture as last sent: its entity_picture, or None.
         self.art: dict[str, str | None] = {}
@@ -178,8 +181,9 @@ class Thermostat:
         if self.entities:
             # The sun too: Automatic wakes to the lights after sunset; and a
             # chosen light group's own lights, listed on its card.
+            weather = [self.entry.options[CONF_WEATHER]] if self.entry.options.get(CONF_WEATHER) else []
             self._tracking = async_track_state_change_event(
-                self.hass, [*self.entities, *self._members(), "sun.sun"], self._changed)
+                self.hass, [*self.entities, *self._members(), *weather, "sun.sun"], self._changed)
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.command_topic, self._command))
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.protocol_topic, self._protocol))
         # A build from before it said: older than this integration needs.
@@ -264,8 +268,13 @@ class Thermostat:
         options = self.entry.options
         sun = self.hass.states.get("sun.sun")
         night = sun is not None and sun.state == "below_horizon"
-        payload = json.dumps(cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
-                                         options.get(CONF_WAKE_DEVICE), night), separators=(",", ":"))
+        shown = cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
+                            options.get(CONF_WAKE_DEVICE), night)
+        if options.get(CONF_GLANCE):
+            offset = dt_util.now().utcoffset()
+            weather = self.hass.states.get(options[CONF_WEATHER]) if options.get(CONF_WEATHER) else None
+            shown["glance"] = cards.glance(weather, offset.total_seconds() if offset else 0)
+        payload = json.dumps(shown, separators=(",", ":"))
         if payload != self.last:
             self.last = payload
             await mqtt.async_publish(self.hass, self.cards_topic, payload, retain=True)

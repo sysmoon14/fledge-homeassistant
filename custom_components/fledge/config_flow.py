@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_ENTITIES, CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, TOPIC_PREFIX,
+from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_SERIAL, CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, TOPIC_PREFIX,
                     WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
 
 
@@ -49,6 +49,9 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
         vol.Optional(CONF_ENTITIES, description={"suggested_value": current.get(CONF_ENTITIES, [])}): devices,
         vol.Required(CONF_WAKE, default=current.get(CONF_WAKE, WAKE_CHOOSER)): wake,
         vol.Optional(CONF_WAKE_DEVICE, description={"suggested_value": current.get(CONF_WAKE_DEVICE)}): device,
+        vol.Optional(CONF_GLANCE, default=current.get(CONF_GLANCE, False)): selector.BooleanSelector(),
+        vol.Optional(CONF_WEATHER, description={"suggested_value": current.get(CONF_WEATHER)}):
+            selector.EntitySelector(selector.EntitySelectorConfig(domain="weather")),
     })
 
 
@@ -57,6 +60,10 @@ def _options(user_input: dict[str, Any]) -> dict[str, Any]:
                CONF_WAKE: user_input.get(CONF_WAKE, WAKE_CHOOSER)}
     if user_input.get(CONF_WAKE_DEVICE):
         options[CONF_WAKE_DEVICE] = user_input[CONF_WAKE_DEVICE]
+    if user_input.get(CONF_GLANCE):
+        options[CONF_GLANCE] = True
+    if user_input.get(CONF_WEATHER):
+        options[CONF_WEATHER] = user_input[CONF_WEATHER]
     return options
 
 

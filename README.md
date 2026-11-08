@@ -66,6 +66,10 @@ thermostat's own, with:
 | `switch` **Keep screen on** | Keeps the thermostat's display lit. |
 | `button` **Wake screen** | Lights the display onto what it wakes to. |
 
+In **Configure**, **A glance as someone comes near** makes the Nest, when it
+lights up because you walked up (not a touch), show the time, the weather (from
+a weather entity you pick) and what's on; a touch shows what it wakes to.
+
 So the thermostat can show what matters right now, for example the speaker
 while music plays, and the device chooser otherwise:
 

@@ -165,6 +165,18 @@ def card(state: State, get: Any = lambda _: None) -> dict[str, Any]:
 MEMBERS = 8
 
 
+def glance(weather: State | None, offset: float) -> dict[str, Any]:
+    """The glance's: Home Assistant's time zone (seconds east of UTC) and,
+    from a weather entity, the condition and temperature."""
+    out: dict[str, Any] = {"offset": round(offset)}
+    if weather is not None and weather.state not in ("unavailable", "unknown"):
+        temperature = weather.attributes.get("temperature")
+        out["weather"] = {"condition": weather.state,
+                          "temperature": temperature if isinstance(temperature, (int, float)) else None,
+                          "unit": weather.attributes.get("temperature_unit") or ""}
+    return out
+
+
 def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
           night: bool = False) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state

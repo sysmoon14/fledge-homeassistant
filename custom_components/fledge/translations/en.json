@@ -19,12 +19,16 @@
         "data": {
           "entities": "Devices",
           "wake": "When the thermostat wakes",
-          "wake_device": "Or open this device"
+          "wake_device": "Or open this device",
+          "glance": "A glance as someone comes near",
+          "weather": "Weather for the glance"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
-          "wake_device": "Wake straight into one of the devices above instead."
+          "wake_device": "Wake straight into one of the devices above instead.",
+          "glance": "When the Nest lights up because someone walked up, rather than a touch, it shows the time, the weather and what's on. A touch shows what it wakes to.",
+          "weather": "A weather entity, for the glance."
         }
       }
     },
@@ -42,12 +46,16 @@
         "data": {
           "entities": "Devices",
           "wake": "When the thermostat wakes",
-          "wake_device": "Or open this device"
+          "wake_device": "Or open this device",
+          "glance": "A glance as someone comes near",
+          "weather": "Weather for the glance"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
-          "wake_device": "Wake straight into one of the devices above instead."
+          "wake_device": "Wake straight into one of the devices above instead.",
+          "glance": "When the Nest lights up because someone walked up, rather than a touch, it shows the time, the weather and what's on. A touch shows what it wakes to.",
+          "weather": "A weather entity, for the glance."
         }
       }
     }

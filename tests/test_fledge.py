@@ -140,6 +140,14 @@ def test_options_covers_presets_and_groups():
     assert command({"id": "cover.blind", "action": "position", "value": 300}) is None
 
 
+def test_the_glance_has_the_time_zone_and_the_weather():
+    weather = State("weather.home", "partlycloudy", temperature=8.4, temperature_unit="°C")
+    assert cards.glance(weather, 3600.4) == {"offset": 3600, "weather": {"condition": "partlycloudy",
+                                                                        "temperature": 8.4, "unit": "°C"}}
+    assert cards.glance(None, 0) == {"offset": 0}
+    assert cards.glance(State("weather.home", "unavailable"), 0) == {"offset": 0}
+
+
 def test_the_thermostat_wakes_to_what_was_chosen():
     states = {"light.lamp": State("light.lamp", "on"), "climate.utility": State("climate.utility", "heat")}
     wake = lambda w, device=None: cards.cards(["light.lamp", "climate.utility"], states.get, w, device)["wake"]
@@ -357,10 +365,10 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
     await hass.async_block_till_done()
     assert issue() is not None, "a build that never says is too old"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "3")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "4")
     await hass.async_block_till_done()
     assert issue() is None, "updated: the repair goes"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "2")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "3")
     await hass.async_block_till_done()
     assert issue() is not None
 

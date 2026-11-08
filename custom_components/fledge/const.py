@@ -11,6 +11,10 @@ CONF_ENTITIES = "entities"
 # What it wakes to: the chooser or itself, unless CONF_WAKE_DEVICE names a card.
 CONF_WAKE = "wake"
 CONF_WAKE_DEVICE = "wake_device"
+# A glance as someone comes near (the time, the weather, what's on), and
+# the weather entity it shows.
+CONF_GLANCE = "glance"
+CONF_WEATHER = "weather"
 # Before 0.4.4: rooms' lights, less some, then thermostats and media players.
 CONF_AREAS = "areas"
 CONF_EXCLUDE = "exclude"
@@ -36,7 +40,7 @@ COMMAND_TOPIC = "{prefix}/{serial}/ui/command"
 # What of the cards the thermostat's build understands (retained).
 PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
 # What this integration needs of it: nestlocal's ui::PROTOCOL.
-PROTOCOL = 3
+PROTOCOL = 4
 # Asks the thermostat to look for its own update now (its button's command).
 CHECK_TOPIC = "{prefix}/{serial}/set/check_update"
 # Keeps the thermostat's display lit (ON/OFF, retained), and wakes it.
