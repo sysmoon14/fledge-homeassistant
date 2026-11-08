@@ -4,8 +4,8 @@ imports, so it can be tested on its own.
 The cards are what nestlocal reads on <base>/set/ui (crates/nestlocal/src/ui/
 model.rs); a command is what it sends on <base>/ui/command:
 
-    {"id": "light.x", "action": "on" | "off" | "brightness" | "temperature"
-                                | "volume" | "play_pause", "value": <number>}
+    {"id": "light.x", "action": "on" | "off" | "brightness" | "color_temp" | "hue"
+                                | "temperature" | "volume" | "play_pause", "value": <number>}
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
 from .const import SWITCHED
+
+# Colour modes with colours to choose, beyond a white's warmth.
+COLOUR_MODES = ("hs", "rgb", "rgbw", "rgbww", "xy")
 
 
 class State(Protocol):
@@ -46,7 +49,41 @@ def light(state: State) -> dict[str, Any]:
         and any(mode not in ("onoff", "unknown") for mode in modes),
         "brightness": max(round(level * 100 / 255), 1) if on and isinstance(level, (int, float)) else None,
         "rgb": list(rgb) if rgb else None,
+        **_shades(state, modes),
     }
+
+
+def _shades(state: State, modes: Sequence[str]) -> dict[str, Any]:
+    """A light's white warmth (kelvin, and the range it takes) and colour
+    (hue), where it has them, for their dials on the thermostat."""
+    out: dict[str, Any] = {}
+    attributes = state.attributes
+    if "color_temp" in modes:
+        low, high = attributes.get("min_color_temp_kelvin"), attributes.get("max_color_temp_kelvin")
+        if isinstance(low, (int, float)) and isinstance(high, (int, float)) and low < high:
+            out["kelvins"] = [round(low), round(high)]
+            kelvin = attributes.get("color_temp_kelvin")
+            out["kelvin"] = round(kelvin) if isinstance(kelvin, (int, float)) else None
+    if any(mode in COLOUR_MODES for mode in modes):
+        out["hues"] = True
+        hs = attributes.get("hs_color")
+        coloured = attributes.get("color_mode") != "color_temp"
+        out["hue"] = round(hs[0]) % 360 if coloured and hs and isinstance(hs[0], (int, float)) else None
+    return out
+
+
+def _seconds(value: Any) -> float | None:
+    """A time Home Assistant gives as a datetime (or its ISO text), in Unix
+    seconds."""
+    if hasattr(value, "timestamp"):
+        return value.timestamp()
+    if isinstance(value, str):
+        from datetime import datetime
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return None
+    return None
 
 
 def climate(state: State) -> dict[str, Any]:
@@ -77,6 +114,9 @@ def media(state: State) -> dict[str, Any]:
         "title": state.attributes.get("media_title") or "",
         "artist": state.attributes.get("media_artist") or "",
         "volume": round(volume * 100) if isinstance(volume, (int, float)) else None,
+        "position": state.attributes.get("media_position"),
+        "position_at": _seconds(state.attributes.get("media_position_updated_at")),
+        "duration": state.attributes.get("media_duration"),
     }
 
 
@@ -138,6 +178,10 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
             return Call("homeassistant", "turn_on", entity, {})
         if what == "brightness" and domain == "light" and 1 <= value <= 100:
             return Call("light", "turn_on", entity, {"brightness_pct": round(value)})
+        if what == "color_temp" and domain == "light" and 1000 <= value <= 12000:
+            return Call("light", "turn_on", entity, {"color_temp_kelvin": round(value)})
+        if what == "hue" and domain == "light" and 0 <= value <= 360:
+            return Call("light", "turn_on", entity, {"hs_color": [value % 360, 100]})
     if domain == "climate" and what == "temperature" and 5 <= value <= 35:
         return Call("climate", "set_temperature", entity, {"temperature": value})
     if domain == "media_player":

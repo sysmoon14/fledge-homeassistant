@@ -27,7 +27,7 @@ from homeassistant.loader import async_get_integration
 
 from . import art, cards
 from .config_flow import thermostats
-from .const import (ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,11 +45,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: FledgeConfigEntry) -> bo
     entry.runtime_data = thermostat
     entry.async_on_unload(thermostat.async_stop)
     entry.async_on_unload(entry.add_update_listener(_reload))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: FledgeConfigEntry) -> bool:
-    return True
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -63,7 +64,13 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                                      retain=True)
 
 
-async def _reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _reload(hass: HomeAssistant, entry: FledgeConfigEntry) -> None:
+    """Changed options: other devices start afresh; only what it wakes to
+    (an automation's Wake to, say) is just sent on."""
+    thermostat = getattr(entry, "runtime_data", None)
+    if thermostat is not None and list(entry.options.get(CONF_ENTITIES, [])) == thermostat.entities:
+        await thermostat.async_wake_changed()
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -117,6 +124,8 @@ class Thermostat:
         # What the thermostat's build understands; None until it says.
         self.protocol: int | None = None
         self.version = ""
+        # Called as what it wakes to changes (the Wake to select).
+        self.wake_listeners: list[Any] = []
         self.entities: list[str] = list(entry.options.get(CONF_ENTITIES, []))
         self.serial = serial
         # Each media player's picture as last sent: its entity_picture, or None.
@@ -198,6 +207,12 @@ class Thermostat:
     @callback
     def _changed(self, event: Event) -> None:
         self.hass.async_create_task(self._publisher.async_call())
+
+    async def async_wake_changed(self) -> None:
+        """What it wakes to changed: sent on, and Wake to shows it."""
+        await self._publish()
+        for listener in list(self.wake_listeners):
+            listener()
 
     async def _publish(self) -> None:
         options = self.entry.options

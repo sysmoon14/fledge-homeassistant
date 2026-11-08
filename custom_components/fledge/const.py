@@ -30,9 +30,14 @@ COMMAND_TOPIC = "{prefix}/{serial}/ui/command"
 # What of the cards the thermostat's build understands (retained).
 PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
 # What this integration needs of it: nestlocal's ui::PROTOCOL.
-PROTOCOL = 1
+PROTOCOL = 2
 # Asks the thermostat to look for its own update now (its button's command).
 CHECK_TOPIC = "{prefix}/{serial}/set/check_update"
+# Keeps the thermostat's display lit (ON/OFF, retained), and wakes it.
+SCREEN_ON_TOPIC = "{prefix}/{serial}/set/screen_on"
+SCREEN_WAKE_TOPIC = "{prefix}/{serial}/set/screen_wake"
+# The entities on the cards' device.
+PLATFORMS = ["select", "switch", "button"]
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 

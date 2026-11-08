@@ -56,6 +56,23 @@ def test_each_device_is_a_card_in_the_order_chosen():
     assert out[3]["lights"][0]["dimmable"] is False
 
 
+def test_a_light_s_warmth_and_colour_and_a_track_s_progress():
+    white = State("light.white", "on", supported_color_modes=["color_temp"], color_mode="color_temp",
+                  color_temp_kelvin=2702.6, min_color_temp_kelvin=2202, max_color_temp_kelvin=6535, hs_color=(30, 60))
+    assert {k: cards.light(white).get(k) for k in ("kelvin", "kelvins", "hues", "hue")} == \
+        {"kelvin": 2703, "kelvins": [2202, 6535], "hues": None, "hue": None}
+    colour = State("light.strip", "on", supported_color_modes=["color_temp", "hs"], color_mode="hs", hs_color=(359.6, 80),
+                   min_color_temp_kelvin=2000, max_color_temp_kelvin=6500)
+    assert (cards.light(colour)["hues"], cards.light(colour)["hue"]) == (True, 0)
+    assert "kelvins" not in cards.light(State("light.plain", "on", supported_color_modes=["brightness"]))
+    from datetime import datetime, timezone
+    at = datetime(2026, 11, 8, 19, 0, tzinfo=timezone.utc)
+    player = State("media_player.speaker", "playing", media_position=42, media_duration=180,
+                   media_position_updated_at=at)
+    assert {k: cards.media(player)[k] for k in ("position", "position_at", "duration")} == \
+        {"position": 42, "position_at": at.timestamp(), "duration": 180}
+
+
 def test_the_thermostat_wakes_to_what_was_chosen():
     states = {"light.lamp": State("light.lamp", "on"), "climate.utility": State("climate.utility", "heat")}
     wake = lambda w, device=None: cards.cards(["light.lamp", "climate.utility"], states.get, w, device)["wake"]
@@ -71,11 +88,15 @@ def test_commands_reach_only_what_was_chosen_only_as_allowed():
         cards.Call("light", "turn_on", "light.lamp", {"brightness_pct": 40})
     assert command({"id": "switch.fan", "action": "on"}) == cards.Call("homeassistant", "turn_on", "switch.fan", {})
     assert command({"id": "climate.utility", "action": "temperature", "value": 20.5}).data == {"temperature": 20.5}
+    assert command({"id": "light.lamp", "action": "color_temp", "value": 2700}).data == {"color_temp_kelvin": 2700}
+    assert command({"id": "light.lamp", "action": "hue", "value": 200}).data == {"hs_color": [200, 100]}
     assert command({"id": "media_player.speaker", "action": "volume", "value": 35}).data == {"volume_level": 0.35}
     refused = [
         {"id": "light.other", "action": "on"},
         {"id": "light.lamp", "action": "temperature", "value": 20},
         {"id": "switch.fan", "action": "brightness", "value": 50},
+        {"id": "switch.fan", "action": "hue", "value": 50},
+        {"id": "light.lamp", "action": "color_temp", "value": 99999},
         {"id": "climate.utility", "action": "on"},
         {"id": "climate.utility", "action": "temperature", "value": 90},
         {"id": "media_player.speaker", "action": "off"},
@@ -268,10 +289,10 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
     await hass.async_block_till_done()
     assert issue() is not None, "a build that never says is too old"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "1")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "2")
     await hass.async_block_till_done()
     assert issue() is None, "updated: the repair goes"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "0")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "1")
     await hass.async_block_till_done()
     assert issue() is not None
 
@@ -293,6 +314,39 @@ async def test_an_updated_integration_has_the_thermostat_check_for_its_own(hass:
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert len(checks()) == 2, "updated: the thermostat checks for its own"
+
+
+async def test_wake_to_and_the_screen_from_home_assistant(hass: HomeAssistant, mqtt_mock) -> None:
+    hass.states.async_set("light.lamp", "on", {"friendly_name": "Lamp"})
+    hass.states.async_set("media_player.speaker", "playing", {"friendly_name": "Speaker"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["light.lamp", "media_player.speaker"], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    select = er.async_get(hass).async_get_entity_id("select", DOMAIN, f"{SERIAL}_wake_to")
+    state = hass.states.get(select)
+    assert state.state == "Device chooser" and state.attributes["options"] == \
+        ["Device chooser", "Thermostat", "Lamp", "Speaker"]
+    thermostat = entry.runtime_data
+    await hass.services.async_call("select", "select_option", {"entity_id": select, "option": "Speaker"}, blocking=True)
+    await hass.async_block_till_done()
+    assert entry.runtime_data is thermostat, "only what it wakes to changed: no reload"
+    assert json.loads(_published(mqtt_mock)[-1][1])["wake"] == 1
+    assert hass.states.get(select).state == "Speaker"
+    await hass.services.async_call("select", "select_option", {"entity_id": select, "option": "Thermostat"},
+                                   blocking=True)
+    await hass.async_block_till_done()
+    assert json.loads(_published(mqtt_mock)[-1][1])["wake"] == "thermostat"
+    assert entry.options == {"entities": ["light.lamp", "media_player.speaker"], "wake": "thermostat"}
+
+    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{SERIAL}_keep_screen_on")
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+    mqtt_mock.async_publish.assert_any_call(f"nestlocal/{SERIAL}/set/screen_on", "ON", 0, True)
+    assert hass.states.get(switch).state == "on"
+    button = er.async_get(hass).async_get_entity_id("button", DOMAIN, f"{SERIAL}_wake_screen")
+    await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
+    mqtt_mock.async_publish.assert_any_call(f"nestlocal/{SERIAL}/set/screen_wake", "PRESS", 0, False)
 
 
 async def test_rooms_become_a_card_a_light(hass: HomeAssistant, mqtt_mock) -> None:

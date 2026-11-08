@@ -65,5 +65,22 @@
       "title": "Update the thermostat's Fledge",
       "description": "The Nest thermostat {serial} runs a Fledge build older than this integration needs, so some of its cards may not work. Install its update from the thermostat's update entity (Settings → Updates)."
     }
+  },
+  "entity": {
+    "select": {
+      "wake_to": {
+        "name": "Wake to"
+      }
+    },
+    "switch": {
+      "keep_screen_on": {
+        "name": "Keep screen on"
+      }
+    },
+    "button": {
+      "wake_screen": {
+        "name": "Wake screen"
+      }
+    }
   }
 }

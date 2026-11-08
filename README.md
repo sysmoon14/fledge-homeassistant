@@ -1,48 +1,106 @@
-# Fledge for Home Assistant
+<p align="center">
+  <img src="assets/fledge.svg" width="112" height="112" alt="Fledge: a bird leaving the Nest's lit dial">
+</p>
 
-Home Assistant on the screen of a Nest Learning Thermostat (3rd generation)
-running [Fledge](https://github.com/sysmoon14/fledge). Waking the thermostat
-shows it among a card for each device you choose (lights, switches, fans,
-other thermostats, media players), zoomed out: turning browses, pressing
-opens one. A light dims, a switch switches, a thermostat sets its
-temperature, a speaker its volume, with its album art on its card. A long
-press switches a light on or off, or plays or pauses a speaker, from its card
-or its own screen. A light group makes a whole room one card.
+<h1 align="center">Fledge for Home Assistant</h1>
+
+<p align="center">
+  <b>Home Assistant on your Nest thermostat's own screen.</b><br>
+  Turn the ring to your lights, heating zones and speakers. Press to take control.
+</p>
+
+<p align="center">
+  <a href="https://github.com/sysmoon14/fledge-homeassistant/releases"><img src="https://img.shields.io/github/v/release/sysmoon14/fledge-homeassistant?color=F15A00" alt="Latest release"></a>
+  <a href="https://github.com/sysmoon14/fledge-homeassistant/actions"><img src="https://img.shields.io/github/actions/workflow/status/sysmoon14/fledge-homeassistant/checks.yml?label=checks" alt="Checks"></a>
+  <img src="https://img.shields.io/badge/Home%20Assistant-2026.3%2B-41BDF5" alt="Home Assistant 2026.3 or later">
+</p>
+
+<p align="center">
+  <img src="assets/screens.png" width="100%" alt="Five of the thermostat's screens: a room's lights, another heating zone that is heating, a speaker's album art and progress, and a lamp's warmth and colour dials.">
+</p>
+
+Walk up to the thermostat and it wakes to your devices, zoomed out around the
+thermostat itself, each card's name above it. Turn to browse, press to open:
+
+| Card | Press | Turn | Long press | Its menu |
+|-|-|-|-|-|
+| 💡 **Light** | its dimmer | brightness | on / off | on / off, **warmth** and **colour** dials, where the light has them |
+| 🔌 **Switch, fan** | on / off | | on / off | |
+| 🌡️ **Other thermostat** | its target | the temperature, as the Nest sets its own | | |
+| 🔊 **Speaker** | its volume | the volume | play / pause | play / pause; album art and progress on the card |
+| 🔥 **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
+
+Everything is drawn on the thermostat at 60 frames a second, in the Nest's own
+style, with its clicks. The Nest keeps running the heating throughout.
+
+This is the Home Assistant half of **[Fledge](https://github.com/sysmoon14/fledge)**,
+which roots the thermostat and runs it locally. It needs a Nest Learning
+Thermostat (3rd generation) running Fledge, connected to Home Assistant over MQTT.
 
 ## Install
 
-1. The thermostat runs Fledge and is connected to Home Assistant over MQTT
-   (it shows up as a "Nest Thermostat" device).
-2. In the Marketplace (or HACS), add
-   `https://github.com/sysmoon14/fledge-homeassistant` as a custom repository
-   of type Integration, and download Fledge. Restart Home Assistant.
-3. Home Assistant offers the thermostat under Settings → Devices & services
-   (or add Fledge there by hand). Choose its devices, in the order they
-   show, and what it wakes to: the device chooser, the thermostat as the
-   Nest always did, or one of the devices.
+1. **Fledge on the thermostat**, with MQTT: it shows up in Home Assistant as a
+   "Nest Thermostat" device. See [Fledge](https://github.com/sysmoon14/fledge#get-started).
+2. **This integration:** in the Marketplace (or HACS), add
+   `https://github.com/sysmoon14/fledge-homeassistant` as a custom repository of
+   type Integration, download **Fledge**, and restart Home Assistant.
+3. **Set it up:** Home Assistant offers the thermostat under Settings →
+   Devices & services (or add Fledge there by hand). Pick your devices, in the
+   order you want them, and what the thermostat wakes to.
 
-Change them any time from the integration's **Configure**. The integration's
-page leads to the thermostat's device and all its entities. Removing the
-integration puts the thermostat back as it was.
+Change them any time from the integration's **Configure**. A light group makes
+a whole room one card. Removing the integration puts the thermostat back as it was.
+
+## Make it yours with automations
+
+The integration adds a **Nest Thermostat cards** device, connected to the
+thermostat's own, with:
+
+| Entity | What it does |
+|-|-|
+| `select` **Wake to** | What the thermostat shows as it wakes: the device chooser, the thermostat as the Nest always did, or any of your devices. |
+| `switch` **Keep screen on** | Keeps the thermostat's display lit. |
+| `button` **Wake screen** | Lights the display onto what it wakes to. |
+
+So the thermostat can show what matters right now, for example the speaker
+while music plays, and the device chooser otherwise:
+
+```yaml
+automation:
+  - alias: Nest shows the music while it plays
+    triggers:
+      - trigger: state
+        entity_id: media_player.kitchen_speaker
+    actions:
+      - action: select.select_option
+        target:
+          entity_id: select.nest_thermostat_cards_wake_to
+        data:
+          option: "{{ 'Kitchen speaker' if is_state('media_player.kitchen_speaker', 'playing') else 'Device chooser' }}"
+```
+
+Or keep the screen on while you cook, light it when the doorbell rings, or wake
+it to the lights at sunset.
 
 ## Updates
 
-This integration and the thermostat's own software are released apart:
-update this one from the Marketplace, and the thermostat from its update
-entity (Settings → Updates); when this integration updates, it has the
-thermostat look for its own update straight away, as the two often come out
-together. They talk only over MQTT. The thermostat says
-which version of the cards it understands (`nestlocal/<serial>/ui/protocol`);
-if it's older than this integration needs, a repair under Settings → Repairs
-says to update it.
+This integration and the thermostat's software are released apart, and talk
+only over MQTT:
+
+- **This integration** updates from the Marketplace. When it does, it has the
+  thermostat look for its own update straight away, as the two often come out
+  together.
+- **The thermostat** updates from its own update entity (Settings → Updates),
+  signed, and rolls itself back if the new build doesn't come up.
+- **If they don't match**, the thermostat says which version of the cards it
+  understands, and a repair under Settings → Repairs asks you to update it.
 
 ## What the thermostat may do
 
-Only to the devices chosen here, and only: switch a light, switch or fan on
-or off, set a light's brightness, set a thermostat's temperature, set a media player's
-volume, and play or pause it.
-
-It replaces Fledge's old `nest_ui.yaml` blueprint: use one or the other.
+Only to the devices chosen here, and only: switch a light, switch or fan on or
+off; set a light's brightness, warmth or colour; set a thermostat's temperature;
+set a media player's volume, and play or pause it. Anything else it asks for is
+refused and logged.
 
 ## Development
 
@@ -50,3 +108,11 @@ It replaces Fledge's old `nest_ui.yaml` blueprint: use one or the other.
 uv venv --python 3.13 .venv && uv pip install -r requirements_test.txt
 .venv/bin/pytest
 ```
+
+Checks run on every push: the tests, Home Assistant's hassfest, and HACS validation.
+
+## License
+
+GPL-3.0, as [Fledge](https://github.com/sysmoon14/fledge). Fledge is not
+affiliated with, endorsed or sponsored by Google LLC or Nest Labs. Nest and Nest
+Learning Thermostat are trademarks of Google LLC.
