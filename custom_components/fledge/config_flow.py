@@ -98,7 +98,8 @@ class FledgeConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_thermostats")
         if user_input is not None:
             self._serial = user_input[CONF_SERIAL]
-            await self.async_set_unique_id(self._serial)
+            # Chosen by hand while its discovery waits: this one goes ahead.
+            await self.async_set_unique_id(self._serial, raise_on_progress=False)
             self._abort_if_unique_id_configured()
             return await self.async_step_cards()
         return self.async_show_form(step_id="user", data_schema=vol.Schema({

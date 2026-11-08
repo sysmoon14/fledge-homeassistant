@@ -132,6 +132,21 @@ async def test_choosing_the_thermostat_and_its_cards(hass: HomeAssistant, mqtt_m
                              "wake_device": "light.lamp"}
 
 
+async def test_set_up_by_hand_while_discovered(hass: HomeAssistant, mqtt_mock) -> None:
+    _thermostat(hass)
+    info = MqttServiceInfo(topic=f"nestlocal/{SERIAL}/availability", payload="online", qos=0, retain=True,
+                           subscribed_topic="nestlocal/+/availability", timestamp=0)
+    discovered = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_MQTT},
+                                                           data=info)
+    assert discovered["step_id"] == "confirm"
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"serial": SERIAL})
+    assert result["step_id"] == "cards", "not refused as already in progress"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"entities": [], "wake": "chooser"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN), "the discovery goes with it"
+
+
 async def test_without_a_thermostat_there_is_nothing_to_set_up(hass: HomeAssistant, mqtt_mock) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "no_thermostats"
