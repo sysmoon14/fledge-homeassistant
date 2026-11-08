@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -167,6 +168,10 @@ class Thermostat:
         self.version = ""
         # Called as what it wakes to changes (the Wake to select).
         self.wake_listeners: list[Any] = []
+        # The notifications shown and not yet answered, by tag, until when an
+        # answer is taken (monotonic seconds): an answer to any other, from
+        # whoever else can publish to the broker, fires nothing.
+        self.notifications: dict[str, float] = {}
         self.entities: list[str] = list(entry.options.get(CONF_ENTITIES, []))
         self.weather: str | None = entry.options.get(CONF_WEATHER)
         self.serial = serial
@@ -342,10 +347,14 @@ class Thermostat:
                 await mqtt.async_publish(self.hass, topic, png)
         payload = {"id": tag, "title": data.get("title", ""), "message": data["message"], "icon": data.get("icon", ""),
                    "timeout": data.get("timeout", 30), "picture": picture}
+        now = time.monotonic()
+        self.notifications = {t: until for t, until in self.notifications.items() if until > now}
+        self.notifications[tag] = now + data.get("timeout", 30) + 30
         await mqtt.async_publish(self.hass, ALERT_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial),
                                  json.dumps(payload, separators=(",", ":")))
 
     async def async_dismiss(self, tag: str) -> None:
+        self.notifications.pop(tag, None)
         await mqtt.async_publish(self.hass, ALERT_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial),
                                  json.dumps({"id": tag, "dismiss": True}, separators=(",", ":")))
 
@@ -364,6 +373,9 @@ class Thermostat:
             self.hass.async_create_task(self._send_still(call.entity_id))
             return
         if call.domain == DOMAIN and call.service == "notification":
+            if self.notifications.pop(call.entity_id, 0) < time.monotonic():
+                _LOGGER.warning("Ignoring an answer to a notification not showing: %s", call.entity_id)
+                return
             self.hass.bus.async_fire(EVENT_NOTIFICATION, {"tag": call.entity_id, "action": call.data["action"],
                                                           "serial": self.serial})
             return

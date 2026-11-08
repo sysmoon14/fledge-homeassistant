@@ -167,6 +167,16 @@ set a media player's volume, and play or pause it; run a scene, script or
 button; take a camera's picture. Anything else it asks for is refused and
 logged. A notification's answer only fires an event, for your automations.
 
+## Security
+
+The thermostat and this integration talk over your MQTT broker, so whoever
+can publish to it can do what the thermostat can: anything listed above, to
+the devices you chose (a garage door among them, if you add one), and put
+messages on its screen. Give the broker passwords (and TLS if you can), and if
+it supports ACLs, let only Home Assistant publish to `nestlocal/+/set/#` and
+only the thermostat's user publish to `nestlocal/+/ui/#`. A notification's
+answer is only taken while that notification is showing.
+
 ## Development
 
 ```sh

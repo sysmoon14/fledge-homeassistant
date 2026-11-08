@@ -459,8 +459,11 @@ async def test_notifications_and_their_answers(hass: HomeAssistant, mqtt_mock) -
     events = []
     hass.bus.async_listen("fledge_notification", lambda event: events.append(event.data))
     async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "door", "action": "alert_pressed"}))
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "door", "action": "alert_pressed"}))
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "never_shown", "action": "alert_pressed"}))
     await hass.async_block_till_done()
-    assert events == [{"tag": "door", "action": "pressed", "serial": SERIAL}]
+    assert events == [{"tag": "door", "action": "pressed", "serial": SERIAL}], \
+        "one answer to a notification shown: not twice, nor to one never shown"
 
     await hass.services.async_call(DOMAIN, "dismiss", {"tag": "door"}, blocking=True)
     assert json.loads(sent(alerts)[-1]) == {"id": "door", "dismiss": True}
