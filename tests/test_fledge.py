@@ -73,6 +73,24 @@ def test_a_light_s_warmth_and_colour_and_a_track_s_progress():
         {"position": 42, "position_at": at.timestamp(), "duration": 180}
 
 
+def test_scenes_scripts_buttons_and_cameras_are_cards():
+    states = {e: State(e, "on", friendly_name=n) for e, n in [("scene.goodnight", "Goodnight"),
+              ("script.movie", "Movie"), ("button.doorbell_chime", "Chime"), ("camera.front_door", "Front door")]}
+    out = cards.cards(list(states), states.get)["cards"]
+    assert [(c["kind"], c["name"]) for c in out] == [("action", "Goodnight"), ("action", "Movie"),
+                                                     ("action", "Chime"), ("camera", "Front door")]
+    chosen = list(states)
+    command = lambda payload: cards.command(payload, chosen)
+    assert command({"id": "scene.goodnight", "action": "run"}) == cards.Call("scene", "turn_on", "scene.goodnight", {})
+    assert command({"id": "button.doorbell_chime", "action": "run"}).service == "press"
+    assert command({"id": "camera.front_door", "action": "snapshot"}) == \
+        cards.Call("fledge", "snapshot", "camera.front_door", {})
+    assert command({"id": "door", "action": "alert_pressed"}) == cards.Call("fledge", "notification", "door",
+                                                                          {"action": "pressed"})
+    assert command({"id": "scene.other", "action": "run"}) is None, "only chosen ones"
+    assert command({"id": "camera.front_door", "action": "run"}) is None
+
+
 def test_the_thermostat_wakes_to_what_was_chosen():
     states = {"light.lamp": State("light.lamp", "on"), "climate.utility": State("climate.utility", "heat")}
     wake = lambda w, device=None: cards.cards(["light.lamp", "climate.utility"], states.get, w, device)["wake"]
@@ -289,10 +307,10 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
     await hass.async_block_till_done()
     assert issue() is not None, "a build that never says is too old"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "2")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "3")
     await hass.async_block_till_done()
     assert issue() is None, "updated: the repair goes"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "1")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "2")
     await hass.async_block_till_done()
     assert issue() is not None
 
@@ -347,6 +365,48 @@ async def test_wake_to_and_the_screen_from_home_assistant(hass: HomeAssistant, m
     button = er.async_get(hass).async_get_entity_id("button", DOMAIN, f"{SERIAL}_wake_screen")
     await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
     mqtt_mock.async_publish.assert_any_call(f"nestlocal/{SERIAL}/set/screen_wake", "PRESS", 0, False)
+
+
+async def test_notifications_and_their_answers(hass: HomeAssistant, mqtt_mock) -> None:
+    from unittest.mock import patch
+    from io import BytesIO
+    from PIL import Image
+    from homeassistant.components.camera import Image as CameraImage
+    picture = BytesIO()
+    Image.new("RGB", (640, 360), (30, 60, 90)).save(picture, "JPEG")
+    hass.states.async_set("camera.front_door", "idle", {"friendly_name": "Front door", "entity_picture": "/c?1"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    sent = lambda topic: [c.args[1] for c in mqtt_mock.async_publish.call_args_list if c.args[0] == topic]
+    alerts = f"nestlocal/{SERIAL}/set/alert"
+
+    response = await hass.services.async_call(DOMAIN, "notify", {"message": "Done", "title": "Washing"},
+                                              blocking=True, return_response=True)
+    shown = json.loads(sent(alerts)[-1])
+    assert shown == {"id": response["tag"], "title": "Washing", "message": "Done", "icon": "", "timeout": 30,
+                     "picture": None}
+
+    with patch("homeassistant.components.camera.async_get_image",
+               return_value=CameraImage("image/jpeg", picture.getvalue())):
+        await hass.services.async_call(DOMAIN, "notify", {"message": "Ring", "camera": "camera.front_door",
+                                                          "tag": "door"}, blocking=True)
+    shown = json.loads(sent(alerts)[-1])
+    assert shown["id"] == "door" and shown["picture"] == "alert:door"
+    still = sent(f"nestlocal/{SERIAL}/set/art/alert:door")[-1]
+    with Image.open(BytesIO(still)) as image:
+        assert image.size == (480, 480), "the whole display"
+
+    events = []
+    hass.bus.async_listen("fledge_notification", lambda event: events.append(event.data))
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "door", "action": "alert_pressed"}))
+    await hass.async_block_till_done()
+    assert events == [{"tag": "door", "action": "pressed", "serial": SERIAL}]
+
+    await hass.services.async_call(DOMAIN, "dismiss", {"tag": "door"}, blocking=True)
+    assert json.loads(sent(alerts)[-1]) == {"id": "door", "dismiss": True}
 
 
 async def test_rooms_become_a_card_a_light(hass: HomeAssistant, mqtt_mock) -> None:

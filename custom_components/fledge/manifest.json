@@ -2,7 +2,8 @@
   "domain": "fledge",
   "name": "Fledge",
   "after_dependencies": [
-    "media_player"
+    "media_player",
+    "camera"
   ],
   "codeowners": [
     "@sysmoon14"
@@ -18,5 +19,5 @@
   "mqtt": [
     "nestlocal/+/availability"
   ],
-  "version": "0.6.0"
+  "version": "0.7.0"
 }

@@ -22,7 +22,9 @@ WAKE_THERMOSTAT = "thermostat"
 
 # What can be a card: switched (and dimmed, a light), set, or turned up.
 SWITCHED = ("light", "switch", "fan", "input_boolean")
-DOMAINS = [*SWITCHED, "climate", "media_player"]
+# Pressed, they run: the service each takes.
+RUN = {"scene": "turn_on", "script": "turn_on", "button": "press", "input_button": "press"}
+DOMAINS = [*SWITCHED, "climate", "media_player", *RUN, "camera"]
 
 # The cards the thermostat shows (retained) and what it asks for.
 CARDS_TOPIC = "{prefix}/{serial}/set/ui"
@@ -30,7 +32,7 @@ COMMAND_TOPIC = "{prefix}/{serial}/ui/command"
 # What of the cards the thermostat's build understands (retained).
 PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
 # What this integration needs of it: nestlocal's ui::PROTOCOL.
-PROTOCOL = 2
+PROTOCOL = 3
 # Asks the thermostat to look for its own update now (its button's command).
 CHECK_TOPIC = "{prefix}/{serial}/set/check_update"
 # Keeps the thermostat's display lit (ON/OFF, retained), and wakes it.
@@ -38,6 +40,9 @@ SCREEN_ON_TOPIC = "{prefix}/{serial}/set/screen_on"
 SCREEN_WAKE_TOPIC = "{prefix}/{serial}/set/screen_wake"
 # The entities on the cards' device.
 PLATFORMS = ["select", "switch", "button"]
+# A notification (fledge.notify), and the event its answer fires.
+ALERT_TOPIC = "{prefix}/{serial}/set/alert"
+EVENT_NOTIFICATION = "fledge_notification"
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 

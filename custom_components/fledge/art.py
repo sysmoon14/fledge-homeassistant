@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from io import BytesIO
 
-# How wide the thermostat shows it (nestlocal takes up to 240).
+# How wide the thermostat shows album art, and a camera's still (the whole
+# display; nestlocal takes up to 480).
 SIZE = 168
+SCREEN = 480
 
 
 def thumbnail(data: bytes, size: int = SIZE) -> bytes | None:

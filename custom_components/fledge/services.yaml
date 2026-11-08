@@ -1,0 +1,39 @@
+notify:
+  fields:
+    message:
+      required: true
+      example: "The washing machine has finished."
+      selector:
+        text:
+          multiline: true
+    title:
+      example: "Washing's done"
+      selector:
+        text:
+    icon:
+      example: "mdi:washing-machine"
+      selector:
+        icon:
+    camera:
+      selector:
+        entity:
+          domain: camera
+    timeout:
+      default: 30
+      selector:
+        number:
+          min: 3
+          max: 3600
+          unit_of_measurement: s
+    tag:
+      example: "washing"
+      selector:
+        text:
+
+dismiss:
+  fields:
+    tag:
+      required: true
+      example: "washing"
+      selector:
+        text:

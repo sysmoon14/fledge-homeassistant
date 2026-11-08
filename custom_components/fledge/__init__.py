@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
+
+import voluptuous as vol
 
 from homeassistant.components import mqtt
 from homeassistant.components.media_player import DATA_COMPONENT as MEDIA_PLAYERS
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
@@ -27,12 +30,48 @@ from homeassistant.loader import async_get_integration
 
 from . import art, cards
 from .config_flow import thermostats
-from .const import (PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
 
 type FledgeConfigEntry = ConfigEntry["Thermostat"]
+
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+NOTIFY_SCHEMA = vol.Schema({
+    vol.Required("message"): cv.string,
+    vol.Optional("title", default=""): cv.string,
+    vol.Optional("icon"): cv.icon,
+    vol.Optional("camera"): cv.entity_domain("camera"),
+    vol.Optional("timeout", default=30): vol.All(vol.Coerce(int), vol.Range(min=3, max=3600)),
+    vol.Optional("tag"): cv.string,
+})
+DISMISS_SCHEMA = vol.Schema({vol.Required("tag"): cv.string})
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """fledge.notify and fledge.dismiss: notifications on the thermostats'
+    screens. A press or a dismissal fires fledge_notification with the tag."""
+
+    def running() -> list[Thermostat]:
+        return [entry.runtime_data for entry in hass.config_entries.async_loaded_entries(DOMAIN)]
+
+    async def notify(call: ServiceCall) -> ServiceResponse:
+        tag = call.data.get("tag") or uuid.uuid4().hex[:8]
+        for thermostat in running():
+            await thermostat.async_notify(tag, call.data)
+        return {"tag": tag}
+
+    async def dismiss(call: ServiceCall) -> None:
+        for thermostat in running():
+            await thermostat.async_dismiss(call.data["tag"])
+
+    hass.services.async_register(DOMAIN, "notify", notify, schema=NOTIFY_SCHEMA,
+                                 supports_response=SupportsResponse.OPTIONAL)
+    hass.services.async_register(DOMAIN, "dismiss", dismiss, schema=DISMISS_SCHEMA)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: FledgeConfigEntry) -> bool:
@@ -59,7 +98,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     ir.async_delete_issue(hass, DOMAIN, f"outdated_{serial}")
     await mqtt.async_publish(hass, CARDS_TOPIC.format(prefix=TOPIC_PREFIX, serial=serial), "", retain=True)
     for entity in entry.options.get(CONF_ENTITIES, []):
-        if entity.startswith("media_player."):
+        if entity.startswith(("media_player.", "camera.")):
             await mqtt.async_publish(hass, ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=serial, entity=entity), "",
                                      retain=True)
 
@@ -223,6 +262,14 @@ class Thermostat:
             await mqtt.async_publish(self.hass, self.cards_topic, payload, retain=True)
         for entity in self.entities:
             state = self.hass.states.get(entity)
+            if entity.startswith("camera.") and state is not None:
+                # A new still as the camera's picture changes (its token
+                # turns over every few minutes), and as it comes back.
+                key = None if state.state == "unavailable" else state.attributes.get("entity_picture")
+                if key and self.art.get(entity) != key:
+                    self.art[entity] = key
+                    self.hass.async_create_task(self._send_still(entity))
+                continue
             if not entity.startswith("media_player.") or state is None:
                 continue
             picture = None if state.state in ("off", "unavailable") else state.attributes.get("entity_picture")
@@ -247,6 +294,41 @@ class Thermostat:
         topic = ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial, entity=entity)
         await mqtt.async_publish(self.hass, topic, png or b"", retain=True)
 
+    async def _still(self, camera: str) -> bytes | None:
+        """A camera's picture now, square and display-sized, or None."""
+        from homeassistant.components.camera import async_get_image
+        try:
+            image = await async_get_image(self.hass, camera, timeout=10)
+        except Exception:  # noqa: BLE001 - a camera that can't: no picture
+            _LOGGER.debug("No picture from %s", camera, exc_info=True)
+            return None
+        return await self.hass.async_add_executor_job(art.thumbnail, image.content, art.SCREEN)
+
+    async def _send_still(self, camera: str) -> None:
+        png = await self._still(camera)
+        if png:
+            topic = ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial, entity=camera)
+            await mqtt.async_publish(self.hass, topic, png, retain=True)
+
+    async def async_notify(self, tag: str, data: dict[str, Any]) -> None:
+        """A notification on the thermostat's screen, with the camera's
+        picture now if one is named."""
+        picture = None
+        if camera := data.get("camera"):
+            png = await self._still(camera)
+            if png:
+                picture = f"alert:{tag}"
+                topic = ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial, entity=picture)
+                await mqtt.async_publish(self.hass, topic, png)
+        payload = {"id": tag, "title": data.get("title", ""), "message": data["message"], "icon": data.get("icon", ""),
+                   "timeout": data.get("timeout", 30), "picture": picture}
+        await mqtt.async_publish(self.hass, ALERT_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial),
+                                 json.dumps(payload, separators=(",", ":")))
+
+    async def async_dismiss(self, tag: str) -> None:
+        await mqtt.async_publish(self.hass, ALERT_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial),
+                                 json.dumps({"id": tag, "dismiss": True}, separators=(",", ":")))
+
     @callback
     def _command(self, message: mqtt.ReceiveMessage) -> None:
         try:
@@ -256,6 +338,13 @@ class Thermostat:
         call = cards.command(payload, self.entities) if isinstance(payload, dict) else None
         if call is None:
             _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", message.payload)
+            return
+        if call.domain == DOMAIN and call.service == "snapshot":
+            self.hass.async_create_task(self._send_still(call.entity_id))
+            return
+        if call.domain == DOMAIN and call.service == "notification":
+            self.hass.bus.async_fire(EVENT_NOTIFICATION, {"tag": call.entity_id, "action": call.data["action"],
+                                                          "serial": self.serial})
             return
         self.hass.async_create_task(self.hass.services.async_call(
             call.domain, call.service, {"entity_id": call.entity_id, **call.data}, blocking=False))

@@ -28,6 +28,8 @@ thermostat itself, each card's name above it. Turn to browse, press to open:
 | 🔌 **Switch, fan** | on / off | | on / off | |
 | 🌡️ **Other thermostat** | its target | the temperature, as the Nest sets its own | | |
 | 🔊 **Speaker** | its volume | the volume | play / pause | play / pause; album art and progress on the card |
+| ✨ **Scene, script, button** | runs it | | | |
+| 📷 **Camera** | a fresh picture | | | its latest still fills the card |
 | 🔥 **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
 
 Everything is drawn on the thermostat at 60 frames a second, in the Nest's own
@@ -82,6 +84,62 @@ automation:
 Or keep the screen on while you cook, light it when the doorbell rings, or wake
 it to the lights at sunset.
 
+## Notifications on the Nest
+
+`fledge.notify` puts a message on the thermostat's screen, waking it with a
+chime: an icon, a title and a message, or a camera's picture, taken there and
+then, filling the round screen. Press to answer it, hold to dismiss it; either
+fires a `fledge_notification` event with its tag, so an automation can act on
+the answer. It dismisses itself after `timeout` seconds, and `fledge.dismiss`
+takes it back.
+
+**The doorbell:** someone rings, and the thermostat shows who's there.
+
+```yaml
+automation:
+  - alias: Doorbell on the Nest
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.front_door_ding
+        to: "on"
+    actions:
+      - action: fledge.notify
+        data:
+          title: Someone's at the front door
+          message: Front door
+          camera: camera.front_door
+          tag: doorbell
+          timeout: 60
+```
+
+**An answer:** a press on the Nest locks the back door.
+
+```yaml
+automation:
+  - alias: Back door left open
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.back_door
+        to: "on"
+        for: "00:10:00"
+    actions:
+      - action: fledge.notify
+        data:
+          title: Back door open
+          message: Press to lock it when it's shut.
+          icon: mdi:door-open
+          tag: back_door
+      - wait_for_trigger:
+          - trigger: event
+            event_type: fledge_notification
+            event_data: { tag: back_door, action: pressed }
+        timeout: "00:02:00"
+        continue_on_timeout: false
+      - action: lock.lock
+        target:
+          entity_id: lock.back_door
+```
+
 ## Updates
 
 This integration and the thermostat's software are released apart, and talk
@@ -99,8 +157,9 @@ only over MQTT:
 
 Only to the devices chosen here, and only: switch a light, switch or fan on or
 off; set a light's brightness, warmth or colour; set a thermostat's temperature;
-set a media player's volume, and play or pause it. Anything else it asks for is
-refused and logged.
+set a media player's volume, and play or pause it; run a scene, script or
+button; take a camera's picture. Anything else it asks for is refused and
+logged. A notification's answer only fires an event, for your automations.
 
 ## Development
 

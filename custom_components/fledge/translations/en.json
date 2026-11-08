@@ -82,5 +82,47 @@
         "name": "Wake screen"
       }
     }
+  },
+  "services": {
+    "notify": {
+      "name": "Notify on the thermostat",
+      "description": "Shows a notification on the Nest's screen, waking it, with a chime. A press answers it and a long press (or its time running out) dismisses it; either fires a fledge_notification event with its tag. Returns the tag.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "What it says."
+        },
+        "title": {
+          "name": "Title",
+          "description": "A heading above the message, or over the camera's picture."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "Shown above the title when there's no picture."
+        },
+        "camera": {
+          "name": "Camera",
+          "description": "Shows this camera's picture, taken now, filling the screen: a doorbell's, say."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "How long it shows before it dismisses itself."
+        },
+        "tag": {
+          "name": "Tag",
+          "description": "Names it, for fledge.dismiss and in its event. Made up if left out."
+        }
+      }
+    },
+    "dismiss": {
+      "name": "Dismiss on the thermostat",
+      "description": "Takes a notification off the Nest's screen.",
+      "fields": {
+        "tag": {
+          "name": "Tag",
+          "description": "The tag it was shown with."
+        }
+      }
+    }
   }
 }

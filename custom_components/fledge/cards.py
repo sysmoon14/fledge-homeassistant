@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-from .const import SWITCHED
+from .const import RUN, SWITCHED
 
 # Colour modes with colours to choose, beyond a white's warmth.
 COLOUR_MODES = ("hs", "rgb", "rgbw", "rgbww", "xy")
@@ -132,6 +132,9 @@ def card(state: State) -> dict[str, Any]:
         return climate(state)
     if domain == "media_player":
         return media(state)
+    if domain in RUN or domain == "camera":
+        return {"kind": "action" if domain in RUN else "camera", "id": state.entity_id, "name": _name(state),
+                "icon": state.attributes.get("icon") or ""}
     one = light(state)
     return {"kind": "lights", "name": one["name"], "icon": one["icon"], "lights": [one]}
 
@@ -164,6 +167,9 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
     may give: only the chosen entities, only the ways each kind allows."""
     entity = payload.get("id")
     what = payload.get("action")
+    # A notification's answer: its tag, not an entity, for an event.
+    if what in ("alert_pressed", "alert_dismissed") and isinstance(entity, str) and entity:
+        return Call("fledge", "notification", entity, {"action": what.removeprefix("alert_")})
     try:
         value = float(payload.get("value", 0))
     except (TypeError, ValueError):
@@ -182,6 +188,10 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
             return Call("light", "turn_on", entity, {"color_temp_kelvin": round(value)})
         if what == "hue" and domain == "light" and 0 <= value <= 360:
             return Call("light", "turn_on", entity, {"hs_color": [value % 360, 100]})
+    if domain in RUN and what == "run":
+        return Call(domain, RUN[domain], entity, {})
+    if domain == "camera" and what == "snapshot":
+        return Call("fledge", "snapshot", entity, {})
     if domain == "climate" and what == "temperature" and 5 <= value <= 35:
         return Call("climate", "set_temperature", entity, {"temperature": value})
     if domain == "media_player":
