@@ -31,6 +31,8 @@ COMMAND_TOPIC = "{prefix}/{serial}/ui/command"
 PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
 # What this integration needs of it: nestlocal's ui::PROTOCOL.
 PROTOCOL = 1
+# Asks the thermostat to look for its own update now (its button's command).
+CHECK_TOPIC = "{prefix}/{serial}/set/check_update"
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 

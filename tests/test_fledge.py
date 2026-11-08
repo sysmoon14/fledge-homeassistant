@@ -276,6 +276,25 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     assert issue() is not None
 
 
+async def test_an_updated_integration_has_the_thermostat_check_for_its_own(hass: HomeAssistant, mqtt_mock,
+                                                                           hass_storage) -> None:
+    check = f"nestlocal/{SERIAL}/set/check_update"
+    checks = lambda: [c for c in mqtt_mock.async_publish.call_args_list if c.args[0] == check]
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len(checks()) == 1, "new: it checks once"
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len(checks()) == 1, "restarted, the same version: no check"
+    hass_storage[f"{DOMAIN}.versions"]["data"][SERIAL] = "0.0.1"
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len(checks()) == 2, "updated: the thermostat checks for its own"
+
+
 async def test_rooms_become_a_card_a_light(hass: HomeAssistant, mqtt_mock) -> None:
     bedroom = ar.async_get(hass).async_create("Bedroom", icon="mdi:bed")
     entities = er.async_get(hass)

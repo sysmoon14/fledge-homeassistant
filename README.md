@@ -29,7 +29,9 @@ integration puts the thermostat back as it was.
 
 This integration and the thermostat's own software are released apart:
 update this one from the Marketplace, and the thermostat from its update
-entity (Settings → Updates). They talk only over MQTT. The thermostat says
+entity (Settings → Updates); when this integration updates, it has the
+thermostat look for its own update straight away, as the two often come out
+together. They talk only over MQTT. The thermostat says
 which version of the cards it understands (`nestlocal/<serial>/ui/protocol`);
 if it's older than this integration needs, a repair under Settings → Repairs
 says to update it.

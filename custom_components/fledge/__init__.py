@@ -22,11 +22,12 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 
 from . import art, cards
 from .config_flow import thermostats
-from .const import (ART_TOPIC, CARDS_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -133,8 +134,21 @@ class Thermostat:
         # A build from before it said: older than this integration needs.
         self._unsubscribe.append(async_call_later(self.hass, 60, self._check_protocol))
         self.version = str((await async_get_integration(self.hass, DOMAIN)).version or "")
+        await self._updated()
         self._link()
         await self._publish()
+
+    async def _updated(self) -> None:
+        """This integration just updated: the thermostat checks for its own
+        update now, rather than at its daily check, as the two often come
+        out together. The version each thermostat last saw is kept."""
+        store: Store[dict[str, str]] = Store(self.hass, 1, f"{DOMAIN}.versions")
+        seen = await store.async_load() or {}
+        if seen.get(self.serial) == self.version:
+            return
+        _LOGGER.info("Fledge %s: asking thermostat %s to check for its update", self.version, self.serial)
+        await mqtt.async_publish(self.hass, CHECK_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial), "PRESS")
+        await store.async_save({**seen, self.serial: self.version})
 
     @callback
     def _link(self) -> None:
