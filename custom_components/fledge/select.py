@@ -7,10 +7,10 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_ENTITIES, CONF_WAKE, CONF_WAKE_DEVICE, WAKE_CHOOSER, WAKE_THERMOSTAT
+from .const import CONF_ENTITIES, CONF_WAKE, CONF_WAKE_DEVICE, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT
 from .entity import FledgeEntity
 
-CHOOSER, THERMOSTAT = "Device chooser", "Thermostat"
+CHOOSER, THERMOSTAT, AUTO = "Device chooser", "Thermostat", "Automatic"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, add: AddEntitiesCallback) -> None:
@@ -36,7 +36,7 @@ class WakeTo(FledgeEntity, SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        return [CHOOSER, THERMOSTAT, *self._devices()]
+        return [CHOOSER, AUTO, THERMOSTAT, *self._devices()]
 
     @property
     def current_option(self) -> str | None:
@@ -44,12 +44,15 @@ class WakeTo(FledgeEntity, SelectEntity):
         for name, entity_id in self._devices().items():
             if entity_id == device:
                 return name
-        return THERMOSTAT if self.entry.options.get(CONF_WAKE) == WAKE_THERMOSTAT else CHOOSER
+        wake = self.entry.options.get(CONF_WAKE)
+        return THERMOSTAT if wake == WAKE_THERMOSTAT else AUTO if wake == WAKE_AUTO else CHOOSER
 
     async def async_select_option(self, option: str) -> None:
         options = {k: v for k, v in self.entry.options.items() if k != CONF_WAKE_DEVICE}
         if option == THERMOSTAT:
             options[CONF_WAKE] = WAKE_THERMOSTAT
+        elif option == AUTO:
+            options[CONF_WAKE] = WAKE_AUTO
         elif option == CHOOSER:
             options[CONF_WAKE] = WAKE_CHOOSER
         else:

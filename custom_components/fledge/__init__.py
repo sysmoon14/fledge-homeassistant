@@ -176,7 +176,10 @@ class Thermostat:
 
     async def async_start(self) -> None:
         if self.entities:
-            self._tracking = async_track_state_change_event(self.hass, self.entities, self._changed)
+            # The sun too: Automatic wakes to the lights after sunset; and a
+            # chosen light group's own lights, listed on its card.
+            self._tracking = async_track_state_change_event(
+                self.hass, [*self.entities, *self._members(), "sun.sun"], self._changed)
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.command_topic, self._command))
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.protocol_topic, self._protocol))
         # A build from before it said: older than this integration needs.
@@ -247,6 +250,10 @@ class Thermostat:
     def _changed(self, event: Event) -> None:
         self.hass.async_create_task(self._publisher.async_call())
 
+    def _members(self) -> list[str]:
+        """The chosen light groups' own lights."""
+        return [m for e in self.entities for m in cards.members(self.hass.states.get(e))]
+
     async def async_wake_changed(self) -> None:
         """What it wakes to changed: sent on, and Wake to shows it."""
         await self._publish()
@@ -255,8 +262,10 @@ class Thermostat:
 
     async def _publish(self) -> None:
         options = self.entry.options
+        sun = self.hass.states.get("sun.sun")
+        night = sun is not None and sun.state == "below_horizon"
         payload = json.dumps(cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
-                                         options.get(CONF_WAKE_DEVICE)), separators=(",", ":"))
+                                         options.get(CONF_WAKE_DEVICE), night), separators=(",", ":"))
         if payload != self.last:
             self.last = payload
             await mqtt.async_publish(self.hass, self.cards_topic, payload, retain=True)
@@ -337,7 +346,8 @@ class Thermostat:
             payload = json.loads(message.payload)
         except (TypeError, ValueError):
             return
-        call = cards.command(payload, self.entities) if isinstance(payload, dict) else None
+        allowed = [*self.entities, *self._members()]
+        call = cards.command(payload, allowed) if isinstance(payload, dict) else None
         if call is None:
             _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", message.payload)
             return

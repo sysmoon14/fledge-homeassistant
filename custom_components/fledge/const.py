@@ -19,12 +19,16 @@ CONF_MEDIA = "media"
 
 WAKE_CHOOSER = "chooser"
 WAKE_THERMOSTAT = "thermostat"
+# The speaker playing, else after sunset a light that's on, else the chooser.
+WAKE_AUTO = "auto"
 
 # What can be a card: switched (and dimmed, a light), set, or turned up.
 SWITCHED = ("light", "switch", "fan", "input_boolean")
 # Pressed, they run: the service each takes.
 RUN = {"scene": "turn_on", "script": "turn_on", "button": "press", "input_button": "press"}
-DOMAINS = [*SWITCHED, "climate", "media_player", *RUN, "camera"]
+# A choice of options, and covers set part open.
+CHOICES = ("select", "input_select")
+DOMAINS = [*SWITCHED, "climate", "media_player", *RUN, "camera", *CHOICES, "cover"]
 
 # The cards the thermostat shows (retained) and what it asks for.
 CARDS_TOPIC = "{prefix}/{serial}/set/ui"

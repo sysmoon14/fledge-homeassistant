@@ -56,6 +56,7 @@
     "wake": {
       "options": {
         "chooser": "The device chooser: the thermostat among your devices, zoomed out",
+        "auto": "Automatic: the speaker that's playing, else after sunset a light that's on, else the device chooser",
         "thermostat": "The thermostat, as the Nest always did"
       }
     }

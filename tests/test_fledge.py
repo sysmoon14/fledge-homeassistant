@@ -103,6 +103,43 @@ def test_scenes_scripts_buttons_and_cameras_are_cards():
     assert command({"id": "camera.front_door", "action": "run"}) is None
 
 
+def test_automatic_wakes_to_what_s_going_on():
+    states = {"light.lamp": State("light.lamp", "on"), "media_player.speaker": State("media_player.speaker", "idle"),
+              "climate.utility": State("climate.utility", "heat")}
+    wake = lambda night: cards.cards(["climate.utility", "light.lamp", "media_player.speaker"], states.get, "auto",
+                                     None, night)["wake"]
+    assert wake(False) == "chooser", "daytime, nothing playing"
+    assert wake(True) == 1, "after sunset, the light that's on"
+    states["media_player.speaker"] = State("media_player.speaker", "playing")
+    assert wake(True) == 2, "the music first"
+
+
+def test_options_covers_presets_and_groups():
+    states = {
+        "select.boost": State("select.boost", "Off", friendly_name="Boost", options=["Off", "1 hour"]),
+        "cover.blind": State("cover.blind", "open", friendly_name="Blind", current_position=60, supported_features=15),
+        "climate.kitchen": State("climate.kitchen", "heat", preset_modes=["none", "eco", "away"], preset_mode="none"),
+        "light.bedroom": State("light.bedroom", "on", friendly_name="Bedroom"),
+        "light.lamp": State("light.lamp", "off", friendly_name="Lamp"),
+    }
+    states["light.bedroom"].attributes["entity_id"] = ["light.lamp", "light.gone"]
+    out = cards.cards(list(states)[:4], states.get)["cards"]
+    assert out[0] == {"kind": "options", "id": "select.boost", "name": "Boost", "icon": "", "options": ["Off", "1 hour"],
+                      "current": "Off"}
+    assert (out[1]["kind"], out[1]["position"], out[1]["positionable"]) == ("cover", 60, True)
+    assert out[2]["presets"] == ["eco", "away"], "none isn't a preset to choose"
+    assert [m["id"] for m in out[3]["members"]] == ["light.lamp"], "a group's own lights it knows"
+    allowed = [*list(states)[:4], *cards.members(states["light.bedroom"])]
+    command = lambda payload: cards.command(payload, allowed)
+    assert command({"id": "select.boost", "action": "select", "option": "1 hour"}).data == {"option": "1 hour"}
+    assert command({"id": "cover.blind", "action": "position", "value": 30}).data == {"position": 30}
+    assert command({"id": "cover.blind", "action": "close"}).service == "close_cover"
+    assert command({"id": "climate.kitchen", "action": "preset", "option": "eco"}).data == {"preset_mode": "eco"}
+    assert command({"id": "light.lamp", "action": "on"}).entity_id == "light.lamp", "a group's own light"
+    assert command({"id": "select.boost", "action": "select", "option": 5}) is None
+    assert command({"id": "cover.blind", "action": "position", "value": 300}) is None
+
+
 def test_the_thermostat_wakes_to_what_was_chosen():
     states = {"light.lamp": State("light.lamp", "on"), "climate.utility": State("climate.utility", "heat")}
     wake = lambda w, device=None: cards.cards(["light.lamp", "climate.utility"], states.get, w, device)["wake"]
@@ -121,6 +158,7 @@ def test_commands_reach_only_what_was_chosen_only_as_allowed():
     assert command({"id": "light.lamp", "action": "color_temp", "value": 2700}).data == {"color_temp_kelvin": 2700}
     assert command({"id": "light.lamp", "action": "hue", "value": 200}).data == {"hs_color": [200, 100]}
     assert command({"id": "media_player.speaker", "action": "volume", "value": 35}).data == {"volume_level": 0.35}
+    assert command({"id": "media_player.speaker", "action": "next"}).service == "media_next_track"
     refused = [
         {"id": "light.other", "action": "on"},
         {"id": "light.lamp", "action": "temperature", "value": 20},
@@ -357,7 +395,7 @@ async def test_wake_to_and_the_screen_from_home_assistant(hass: HomeAssistant, m
     select = er.async_get(hass).async_get_entity_id("select", DOMAIN, f"{SERIAL}_wake_to")
     state = hass.states.get(select)
     assert state.state == "Device chooser" and state.attributes["options"] == \
-        ["Device chooser", "Thermostat", "Lamp", "Speaker"]
+        ["Device chooser", "Automatic", "Thermostat", "Lamp", "Speaker"]
     thermostat = entry.runtime_data
     await hass.services.async_call("select", "select_option", {"entity_id": select, "option": "Speaker"}, blocking=True)
     await hass.async_block_till_done()

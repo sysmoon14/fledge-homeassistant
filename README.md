@@ -24,10 +24,12 @@ thermostat itself, each card's name above it. Turn to browse, press to open:
 
 | Card | Press | Turn | Long press | Its menu |
 |-|-|-|-|-|
-| 💡 **Light** | its dimmer | brightness | on / off | on / off, **warmth** and **colour** dials, where the light has them |
+| 💡 **Light** | its dimmer | brightness | on / off | on / off, **warmth** and **colour** dials where it has them, and a group's **each light** |
 | 🔌 **Switch, fan** | on / off | | on / off | |
-| 🌡️ **Other thermostat** | its target | the temperature, as the Nest sets its own | | |
-| 🔊 **Speaker** | its volume | the volume | play / pause | play / pause; album art and progress on the card |
+| 🌡️ **Other thermostat** | its target | the temperature, as the Nest sets its own | | its presets: eco, away… |
+| 🔊 **Speaker** | its volume | the volume | play / pause | play / pause, previous, next; album art and progress on the card |
+| 🔥 **Option (select)** | its options | through them | | e.g. the Nest's hot water boost |
+| 🪟 **Blind, cover** | how open | the position | open / close | open, close |
 | ✨ **Scene, script, button** | runs it | | | |
 | 📷 **Camera** | a fresh picture | | | its latest still fills the card |
 | 🔥 **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
@@ -60,7 +62,7 @@ thermostat's own, with:
 
 | Entity | What it does |
 |-|-|
-| `select` **Wake to** | What the thermostat shows as it wakes: the device chooser, the thermostat as the Nest always did, or any of your devices. |
+| `select` **Wake to** | What the thermostat shows as it wakes: the device chooser, **Automatic** (the speaker that's playing, else after sunset a light that's on, else the chooser), the thermostat as the Nest always did, or any of your devices. |
 | `switch` **Keep screen on** | Keeps the thermostat's display lit. |
 | `button` **Wake screen** | Lights the display onto what it wakes to. |
 

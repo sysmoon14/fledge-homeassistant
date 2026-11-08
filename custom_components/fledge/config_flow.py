@@ -12,7 +12,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
 from .const import (CONF_ENTITIES, CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, TOPIC_PREFIX,
-                    WAKE_CHOOSER, WAKE_THERMOSTAT)
+                    WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
 
 
 def thermostats(hass: HomeAssistant) -> dict[str, dr.DeviceEntry]:
@@ -43,7 +43,7 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
     devices = selector.EntitySelector(selector.EntitySelectorConfig(
         domain=DOMAINS, multiple=True, reorder=True, exclude_entities=_own_entities(hass, serial)))
     wake = selector.SelectSelector(selector.SelectSelectorConfig(
-        options=[WAKE_CHOOSER, WAKE_THERMOSTAT], translation_key="wake", mode=selector.SelectSelectorMode.LIST))
+        options=[WAKE_CHOOSER, WAKE_AUTO, WAKE_THERMOSTAT], translation_key="wake", mode=selector.SelectSelectorMode.LIST))
     device = selector.EntitySelector(selector.EntitySelectorConfig(domain=DOMAINS))
     return vol.Schema({
         vol.Optional(CONF_ENTITIES, description={"suggested_value": current.get(CONF_ENTITIES, [])}): devices,

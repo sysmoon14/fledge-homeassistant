@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-from .const import RUN, SWITCHED
+from .const import CHOICES, RUN, SWITCHED
 
 # Colour modes with colours to choose, beyond a white's warmth.
 COLOUR_MODES = ("hs", "rgb", "rgbw", "rgbww", "xy")
@@ -100,6 +100,8 @@ def climate(state: State) -> dict[str, Any]:
         "min": attributes.get("min_temp") or 7,
         "max": attributes.get("max_temp") or 30,
         "step": attributes.get("target_temp_step") or 0.5,
+        "presets": [p for p in attributes.get("preset_modes") or [] if p != "none"][:4],
+        "preset": attributes.get("preset_mode"),
     }
 
 
@@ -124,10 +126,29 @@ def _domain(entity_id: str) -> str:
     return entity_id.partition(".")[0]
 
 
-def card(state: State) -> dict[str, Any]:
-    """One device's card: a thermostat's, a media player's, or one light's
-    (or switch's), which the thermostat dims or switches straight away."""
+def members(state: State | None) -> list[str]:
+    """A light group's own lights (its entity_id attribute), if it is one."""
+    if state is None or _domain(state.entity_id) != "light":
+        return []
+    found = state.attributes.get("entity_id")
+    return [e for e in found if isinstance(e, str) and e != state.entity_id] if isinstance(found, (list, tuple)) else []
+
+
+def card(state: State, get: Any = lambda _: None) -> dict[str, Any]:
+    """One device's card: a thermostat's, a media player's, a scene's, a
+    camera's, a select's, a cover's, or one light's (or switch's), which the
+    thermostat dims or switches straight away; a light group's with its own
+    lights, from `get`, to switch each."""
     domain = _domain(state.entity_id)
+    if domain in CHOICES:
+        return {"kind": "options", "id": state.entity_id, "name": _name(state),
+                "icon": state.attributes.get("icon") or "",
+                "options": [str(o) for o in state.attributes.get("options") or []][:12], "current": state.state}
+    if domain == "cover":
+        position = state.attributes.get("current_position")
+        return {"kind": "cover", "id": state.entity_id, "name": _name(state), "icon": state.attributes.get("icon") or "",
+                "state": state.state, "position": round(position) if isinstance(position, (int, float)) else None,
+                "positionable": bool((state.attributes.get("supported_features") or 0) & 4)}
     if domain == "climate":
         return climate(state)
     if domain == "media_player":
@@ -136,20 +157,31 @@ def card(state: State) -> dict[str, Any]:
         return {"kind": "action" if domain in RUN else "camera", "id": state.entity_id, "name": _name(state),
                 "icon": state.attributes.get("icon") or ""}
     one = light(state)
-    return {"kind": "lights", "name": one["name"], "icon": one["icon"], "lights": [one]}
+    own = [light(s) for s in map(get, members(state)) if s is not None][:MEMBERS]
+    return {"kind": "lights", "name": one["name"], "icon": one["icon"], "lights": [one], "members": own}
 
 
-def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None) -> dict[str, Any]:
+# A group's own lights the thermostat lists, at most.
+MEMBERS = 8
+
+
+def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
+          night: bool = False) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state
     from `get` (None: unknown to Home Assistant, left out), and what the
     thermostat wakes to: `device`'s place among the cards, else "chooser"
-    or "thermostat" as `wake` says."""
+    or "thermostat" as `wake` says; "auto" picks: the first media player
+    playing, else at `night` the first light that's on, else the chooser."""
     shown = [state for state in map(get, entities) if state is not None]
     ids = [state.entity_id for state in shown]
     woken: Any = "thermostat" if wake == "thermostat" else "chooser"
+    if wake == "auto":
+        playing = [i for i, s in enumerate(shown) if _domain(s.entity_id) == "media_player" and s.state == "playing"]
+        lit = [i for i, s in enumerate(shown) if night and _domain(s.entity_id) == "light" and s.state == "on"]
+        woken = (playing or lit or ["chooser"])[0]
     if device in ids:
         woken = ids.index(device)
-    return {"cards": [card(state) for state in shown], "wake": woken}
+    return {"cards": [card(state, get) for state in shown], "wake": woken}
 
 
 @dataclass
@@ -164,7 +196,8 @@ class Call:
 
 def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
     """What a command from the thermostat does, or None if it isn't one it
-    may give: only the chosen entities, only the ways each kind allows."""
+    may give: only the chosen entities (a chosen group's own lights among
+    them), only the ways each kind allows."""
     entity = payload.get("id")
     what = payload.get("action")
     # A notification's answer: its tag, not an entity, for an event.
@@ -199,4 +232,17 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
             return Call("media_player", "volume_set", entity, {"volume_level": value / 100})
         if what == "play_pause":
             return Call("media_player", "media_play_pause", entity, {})
+        if what in ("next", "previous"):
+            return Call("media_player", f"media_{what}_track", entity, {})
+    option = payload.get("option")
+    named = isinstance(option, str) and 0 < len(option) <= 64
+    if domain == "climate" and what == "preset" and named:
+        return Call("climate", "set_preset_mode", entity, {"preset_mode": option})
+    if domain in CHOICES and what == "select" and named:
+        return Call(domain, "select_option", entity, {"option": option})
+    if domain == "cover":
+        if what == "position" and 0 <= value <= 100:
+            return Call("cover", "set_cover_position", entity, {"position": round(value)})
+        if what in ("open", "close"):
+            return Call("cover", f"{what}_cover", entity, {})
     return None
