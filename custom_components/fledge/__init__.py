@@ -22,6 +22,7 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.loader import async_get_integration
 
 from . import art, cards
 from .config_flow import thermostats
@@ -114,6 +115,7 @@ class Thermostat:
         self.protocol_topic = PROTOCOL_TOPIC.format(prefix=TOPIC_PREFIX, serial=serial)
         # What the thermostat's build understands; None until it says.
         self.protocol: int | None = None
+        self.version = ""
         self.entities: list[str] = list(entry.options.get(CONF_ENTITIES, []))
         self.serial = serial
         # Each media player's picture as last sent: its entity_picture, or None.
@@ -130,16 +132,25 @@ class Thermostat:
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.protocol_topic, self._protocol))
         # A build from before it said: older than this integration needs.
         self._unsubscribe.append(async_call_later(self.hass, 60, self._check_protocol))
+        self.version = str((await async_get_integration(self.hass, DOMAIN)).version or "")
         self._link()
         await self._publish()
 
     @callback
     def _link(self) -> None:
-        """Fledge on the thermostat's own device (nestlocal's, over MQTT): the
-        integration's page leads to it and all its entities."""
-        device = thermostats(self.hass).get(self.serial)
-        if device is not None and self.entry.entry_id not in device.config_entries:
-            dr.async_get(self.hass).async_update_device(device.id, add_config_entry_id=self.entry.entry_id)
+        """The cards as a device of their own, connected via the thermostat's
+        (nestlocal's, over MQTT): the integration's page leads to it, and it
+        to the thermostat and all its entities. A device belongs to one
+        integration, so this can't be the thermostat's own."""
+        thermostat = thermostats(self.hass).get(self.serial)
+        name = (thermostat.name_by_user or thermostat.name) if thermostat else None
+        devices = dr.async_get(self.hass)
+        device = devices.async_get_or_create(
+            config_entry_id=self.entry.entry_id, identifiers={(DOMAIN, self.serial)},
+            name=f"{name or 'Nest Thermostat'} cards", manufacturer="Fledge", model="Home screen cards",
+            serial_number=self.serial, sw_version=self.version)
+        if thermostat is not None and device.via_device_id != thermostat.id:
+            devices.async_update_device(device.id, via_device_id=thermostat.id, area_id=device.area_id or thermostat.area_id)
 
     @callback
     def _protocol(self, message: mqtt.ReceiveMessage) -> None:

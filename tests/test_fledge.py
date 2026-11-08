@@ -256,9 +256,12 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    device = dr.async_get(hass).async_get(thermostat.id)
-    assert entry.entry_id in device.config_entries, "the integration's page leads to the thermostat"
-    assert len(device.config_entries) == 2, "still MQTT's too"
+    cards = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, SERIAL)})
+    assert dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id) == [cards]
+    assert cards.name == "Nest Thermostat cards"
+    assert cards.via_device_id == thermostat.id, "it leads to the thermostat and its entities"
+    assert dr.async_get(hass).async_get(thermostat.id).config_entries == thermostat.config_entries, \
+        "the thermostat's device stays MQTT's alone"
 
     issue = lambda: ir.async_get(hass).async_get_issue(DOMAIN, f"outdated_{SERIAL}")
     assert issue() is None, "not yet: the thermostat may still say"

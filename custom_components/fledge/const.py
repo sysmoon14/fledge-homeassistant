@@ -34,5 +34,3 @@ PROTOCOL = 1
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 
-# nestlocal's device in Home Assistant: identifiers ("mqtt", "nestlocal_<serial>").
-DEVICE_IDENTIFIER = "nestlocal_{serial}"
