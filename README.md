@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screens.png" width="100%" alt="Five of the thermostat's screens: a room's lights, another heating zone that is heating, a speaker's album art and progress, and a lamp's warmth and colour dials.">
+  <img src="assets/screens.png" width="100%" alt="Five of the thermostat's screens: the device chooser on a reading lamp's card, the lamp's warmth dial, another heating zone that is heating, a speaker's album art and progress, and the lamp's colour dial.">
 </p>
 
 Walk up to the thermostat and it wakes to your devices, zoomed out around the
