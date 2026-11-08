@@ -73,6 +73,18 @@ def test_a_light_s_warmth_and_colour_and_a_track_s_progress():
         {"position": 42, "position_at": at.timestamp(), "duration": 180}
 
 
+def test_a_camera_s_picture_is_left_alone_when_small_else_shrunk():
+    from io import BytesIO
+    from PIL import Image
+    small, large = BytesIO(), BytesIO()
+    Image.new("RGB", (640, 360), (10, 20, 30)).save(small, "JPEG")
+    Image.new("RGB", (3840, 2160), (10, 20, 30)).save(large, "JPEG")
+    assert art.screen(small.getvalue()) == small.getvalue()
+    with Image.open(BytesIO(art.screen(large.getvalue()))) as out:
+        assert (out.format, out.size) == ("JPEG", (480, 480))
+    assert art.screen(b"nope") is None
+
+
 def test_scenes_scripts_buttons_and_cameras_are_cards():
     states = {e: State(e, "on", friendly_name=n) for e, n in [("scene.goodnight", "Goodnight"),
               ("script.movie", "Movie"), ("button.doorbell_chime", "Chime"), ("camera.front_door", "Front door")]}
@@ -396,8 +408,7 @@ async def test_notifications_and_their_answers(hass: HomeAssistant, mqtt_mock) -
     shown = json.loads(sent(alerts)[-1])
     assert shown["id"] == "door" and shown["picture"] == "alert:door"
     still = sent(f"nestlocal/{SERIAL}/set/art/alert:door")[-1]
-    with Image.open(BytesIO(still)) as image:
-        assert image.size == (480, 480), "the whole display"
+    assert still == picture.getvalue(), "a small JPEG goes as the camera made it, not even decoded"
 
     events = []
     hass.bus.async_listen("fledge_notification", lambda event: events.append(event.data))

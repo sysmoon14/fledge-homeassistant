@@ -295,14 +295,16 @@ class Thermostat:
         await mqtt.async_publish(self.hass, topic, png or b"", retain=True)
 
     async def _still(self, camera: str) -> bytes | None:
-        """A camera's picture now, square and display-sized, or None."""
+        """A camera's picture now, about display-sized, as JPEG, or None."""
         from homeassistant.components.camera import async_get_image
         try:
-            image = await async_get_image(self.hass, camera, timeout=10)
+            # The camera (Frigate) makes it this small itself, or Home
+            # Assistant scales its JPEG cheaply: little left to do here.
+            image = await async_get_image(self.hass, camera, timeout=10, width=art.SCREEN, height=art.SCREEN)
         except Exception:  # noqa: BLE001 - a camera that can't: no picture
             _LOGGER.debug("No picture from %s", camera, exc_info=True)
             return None
-        return await self.hass.async_add_executor_job(art.thumbnail, image.content, art.SCREEN)
+        return await self.hass.async_add_executor_job(art.screen, image.content)
 
     async def _send_still(self, camera: str) -> None:
         png = await self._still(camera)
