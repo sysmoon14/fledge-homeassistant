@@ -376,6 +376,28 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     assert issue() is not None
 
 
+async def test_renaming_the_thermostat_names_its_own_card_straight_away(hass: HomeAssistant, mqtt_mock) -> None:
+    thermostat = _thermostat(hass)
+    hass.states.async_set("light.lamp", "on", {"friendly_name": "Lamp"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["light.lamp"], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "thermostat_name" not in json.loads(_published(mqtt_mock)[-1][1]), "not renamed: the Nest says Thermostat"
+
+    dr.async_get(hass).async_update_device(thermostat.id, name_by_user="Hallway")
+    await hass.async_block_till_done()
+    assert json.loads(_published(mqtt_mock)[-1][1])["thermostat_name"] == "Hallway"
+    cards = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, SERIAL)})
+    assert cards.name == "Hallway cards"
+
+    dr.async_get(hass).async_update_device(thermostat.id, name_by_user=None)
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+    await hass.async_block_till_done()
+    assert "thermostat_name" not in json.loads(_published(mqtt_mock)[-1][1])
+
+
 async def test_an_updated_integration_has_the_thermostat_check_for_its_own(hass: HomeAssistant, mqtt_mock,
                                                                            hass_storage) -> None:
     check = f"nestlocal/{SERIAL}/set/check_update"

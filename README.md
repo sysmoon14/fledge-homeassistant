@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screens.png" width="100%" alt="Five of the thermostat's screens: the device chooser on a reading lamp's card, the lamp's warmth dial, another heating zone that is heating, a speaker's album art and progress, and the lamp's colour dial.">
+  <img src="assets/screens-fledge.png" width="100%" alt="Five screens in Fledge's look: the thermostat heating with 22 minutes to go, a lamp at 60%, a speaker's album art, the glance with the time and weather, and the thermostat's Settings.">
 </p>
 
 Walk up to the thermostat and it wakes to your devices, zoomed out around the
@@ -34,8 +34,16 @@ thermostat itself, each card's name above it. Turn to browse, press to open:
 | **Camera** | a fresh picture | | | its latest still fills the card |
 | **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
 
-Everything is drawn on the thermostat at 60 frames a second, in the Nest's own
-style, with its clicks. The Nest keeps running the heating throughout.
+What you open stays open until you go back (its menu's Back, or a long press
+where that doesn't switch it); left alone, the screen times out, and the next
+wake starts again from the top. Everything is drawn on the thermostat at 60
+frames a second, with its clicks, in Fledge's look (above) or, one setting away
+(Settings → Theme on the thermostat), the Nest's own (below). The Nest keeps
+running the heating throughout.
+
+<p align="center">
+  <img src="assets/screens.png" width="100%" alt="Five screens in the Nest's own look: the device chooser on a reading lamp's card, the lamp's warmth dial, another heating zone that is heating, a speaker's album art and progress, and the lamp's colour dial.">
+</p>
 
 This is the Home Assistant half of **[Fledge](https://github.com/sysmoon14/fledge)**,
 which roots the thermostat and runs it locally. It needs a Nest Learning
@@ -45,18 +53,24 @@ Thermostat (3rd generation) running Fledge, connected to Home Assistant over MQT
 
 1. **Fledge on the thermostat**, with MQTT: it shows up in Home Assistant as a
    "Nest Thermostat" device. See [Fledge](https://github.com/sysmoon14/fledge#get-started).
-2. **This integration:** in the Marketplace (or HACS), add
-   `https://github.com/sysmoon14/fledge-homeassistant` as a custom repository of
-   type Integration, download **Fledge**, and restart Home Assistant.
+2. **This integration:** open it in the Marketplace (or HACS) with this button,
+   download **Fledge**, and restart Home Assistant.
+
+   [![Open the Fledge repository in Home Assistant's Marketplace (HACS)](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=sysmoon14&repository=fledge-homeassistant&category=integration)
+
+   Or add `https://github.com/sysmoon14/fledge-homeassistant` there by hand, as a
+   custom repository of type Integration.
 3. **Set it up:** Home Assistant offers the thermostat under Settings →
-   Devices & services (or add Fledge there by hand). Pick your devices, in the
+   Devices & services, or add it with this button. Pick your devices, in the
    order you want them, and what the thermostat wakes to.
+
+   [![Add the Fledge integration to Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=fledge)
 
 Change them any time from **Fledge** in the sidebar (admins only): drag the
 cards into the ring's order (the thermostat's own card too, from Fledge v0.5 on
 the Nest; Settings stays last), rename one for the Nest or the thermostat
 itself, choose one to wake straight to, and turn a ring on the page to see each
-card drawn as the Nest draws it, in its Nest or Fledge look. The same tabs set
+card drawn as the Nest draws it, in its Fledge look (the default) or the Nest's. The same tabs set
 the wake and glance, try a notification, and show the thermostat's builds, its
 update and a check for one. The integration's **Configure** still works too.
 A light group makes a whole room one card. Removing the integration puts the

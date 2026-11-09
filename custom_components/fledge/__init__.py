@@ -197,6 +197,7 @@ class Thermostat:
                 self.hass, [*self.entities, *self._members(), *weather, "sun.sun"], self._changed)
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.command_topic, self._command))
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.protocol_topic, self._protocol))
+        self._unsubscribe.append(self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed))
         # A build from before it said: older than this integration needs.
         self._unsubscribe.append(async_call_later(self.hass, 60, self._check_protocol))
         self.version = str((await async_get_integration(self.hass, DOMAIN)).version or "")
@@ -231,6 +232,24 @@ class Thermostat:
             serial_number=self.serial, sw_version=self.version)
         if thermostat is not None and device.via_device_id != thermostat.id:
             devices.async_update_device(device.id, via_device_id=thermostat.id, area_id=device.area_id or thermostat.area_id)
+
+    @callback
+    def _device_changed(self, event: Event) -> None:
+        """The thermostat renamed: its own card on the Nest, and the cards'
+        device, say so straight away."""
+        thermostat = thermostats(self.hass).get(self.serial)
+        if thermostat is None or event.data.get("device_id") != thermostat.id:
+            return
+        if event.data.get("action") == "update" and "name_by_user" not in (event.data.get("changes") or {}):
+            return
+        self._link()
+        self.hass.async_create_task(self._publisher.async_call())
+
+    def thermostat_name(self) -> str | None:
+        """What the thermostat was called in Home Assistant, if renamed."""
+        thermostat = thermostats(self.hass).get(self.serial)
+        name = thermostat.name_by_user.strip() if thermostat and thermostat.name_by_user else ""
+        return name or None
 
     @callback
     def _protocol(self, message: mqtt.ReceiveMessage) -> None:
@@ -285,6 +304,9 @@ class Thermostat:
         far, near, idle = presence(options)
         shown["presence"] = {"far": far, "near": near}
         shown["card_idle"] = idle
+        name = self.thermostat_name()
+        if name:
+            shown["thermostat_name"] = name
         if FAR_GLANCE in (far, near):
             offset = dt_util.now().utcoffset()
             weather = self.hass.states.get(options[CONF_WEATHER]) if options.get(CONF_WEATHER) else None

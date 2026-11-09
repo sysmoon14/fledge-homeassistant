@@ -536,7 +536,7 @@ class FledgePanel extends HTMLElement {
     this._seen = {};
     this._drag = null;
     this._pickers = !!customElements.get("ha-entity-picker");
-    try { this._look = localStorage.getItem(LOOK_KEY) === "fledge" ? "fledge" : "nest"; } catch (_) { this._look = "nest"; }
+    try { this._look = localStorage.getItem(LOOK_KEY) === "nest" ? "nest" : "fledge"; } catch (_) { this._look = "fledge"; }
     this.shadowRoot.addEventListener("click", (e) => this._click(e));
     this.shadowRoot.addEventListener("input", (e) => this._input(e));
     this.shadowRoot.addEventListener("change", (e) => this._input(e));
@@ -760,7 +760,9 @@ class FledgePanel extends HTMLElement {
       next = times.map((x) => x?.time).filter((x) => typeof x === "string" && x > clock).sort()[0] || null;
     }
     const boost = state("_hot_water_boost", "select")?.state;
-    return { card, eco: climate?.attributes.preset_mode === "eco", eta, next, boost: /^\d+$/.test(boost || "") ? Number(boost) : null };
+    // As the Nest names its own card: the name given here, else "Thermostat".
+    const named = { ...card, name: this._draft.device_name.trim() || "Thermostat" };
+    return { card: named, eco: climate?.attributes.preset_mode === "eco", eta, next, boost: /^\d+$/.test(boost || "") ? Number(boost) : null };
   }
 
   _card(id) {
@@ -1033,7 +1035,7 @@ class FledgePanel extends HTMLElement {
         <h2>Someone comes up to it</h2>
         <p class="muted small">Close enough to reach it, without touching it.</p>
         ${NEARS.map(([k, label, sub]) => this._presence("near", k, label, sub)).join("")}
-        <div class="field narrowfield"><label for="cardidle">Cards stay for (s)</label><input id="cardidle" type="number" min="5" max="600" value="${esc(d.card_idle)}" data-input="cardidle"></div>
+        <div class="field narrowfield"><label for="cardidle">Screen stays on for (s)</label><input id="cardidle" type="number" min="5" max="600" value="${esc(d.card_idle)}" data-input="cardidle"></div>
         ${this._entityField("weather", "weather", "Weather for the glance", d.weather, d.far !== "glance" && d.near !== "glance")}
         ${keep ? `<div class="kv"><span>Keep screen on<span class="sub">Applies straight away</span></span>${this._switch("keepon", keepOn, "Keep screen on")}</div>` : ""}
       </section>

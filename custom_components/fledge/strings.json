@@ -23,7 +23,7 @@
           "weather": "Weather for the glance",
           "far": "Someone across the room",
           "near": "Someone comes up to it",
-          "card_idle": "Cards stay for"
+          "card_idle": "Screen stays on for"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
@@ -32,7 +32,7 @@
           "weather": "A weather entity, for the glance.",
           "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
           "near": "When someone comes close, without touching it.",
-          "card_idle": "How long the cards stay with nothing touched and nobody close, before going back to the glance (if someone is still about) or dark."
+          "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top."
         }
       }
     },
@@ -54,7 +54,7 @@
           "weather": "Weather for the glance",
           "far": "Someone across the room",
           "near": "Someone comes up to it",
-          "card_idle": "Cards stay for"
+          "card_idle": "Screen stays on for"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
@@ -63,7 +63,7 @@
           "weather": "A weather entity, for the glance.",
           "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
           "near": "When someone comes close, without touching it.",
-          "card_idle": "How long the cards stay with nothing touched and nobody close, before going back to the glance (if someone is still about) or dark."
+          "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top."
         }
       }
     }
