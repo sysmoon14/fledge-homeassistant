@@ -143,11 +143,11 @@
         },
         "heating": {
           "name": "Heating",
-          "description": "Days to replace, each a list of changes: {\"mon\": [{\"time\": \"06:30\", \"temp\": 21}], ...}."
+          "description": "Days to replace (mon to sun), each a list of changes with a time (HH:MM) and a temp in °C. See the README for an example."
         },
         "hot_water": {
           "name": "Hot water",
-          "description": "Days to replace, each a list of on periods: {\"mon\": [{\"on\": \"06:00\", \"off\": \"08:00\"}], ...}."
+          "description": "Days to replace (mon to sun), each a list of on periods with an on and an off time (HH:MM). See the README for an example."
         }
       }
     }
