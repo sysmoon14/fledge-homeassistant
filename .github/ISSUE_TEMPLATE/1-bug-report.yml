@@ -1,0 +1,78 @@
+name: Something went wrong
+description: The cards, notifications, schedule cards or the Fledge panel aren't doing what they should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A problem with patching, the Fledge app, or the thermostat itself (heating, Wi-Fi, MQTT not connecting)? That belongs in [Fledge](https://github.com/sysmoon14/fledge/issues/new/choose) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Photos of the thermostat's screen help a lot.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - Cards on the thermostat's screen
+        - Notifications (fledge.notify)
+        - Heating or hot water schedule cards
+        - The Fledge panel in the sidebar
+        - Setting up or configuring the integration
+        - Updates or the Repairs warning
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      description: HACS → Fledge, or Settings → Devices & services → Fledge.
+      placeholder: "0.13.0"
+    validations:
+      required: true
+  - type: input
+    id: thermostat
+    attributes:
+      label: Fledge version on the thermostat
+      description: From the thermostat's update entity, or the Fledge panel's builds tab.
+      placeholder: "v0.5.4"
+    validations:
+      required: true
+  - type: input
+    id: ha
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+      placeholder: "2026.11.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: generation
+    attributes:
+      label: Thermostat
+      options:
+        - Nest Learning Thermostat, 3rd generation
+        - Nest Learning Thermostat, 2nd generation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug log
+      description: |
+        Settings → Devices & services → Fledge → ⋮ → **Enable debug logging**, make the problem happen again, then **Disable debug logging**: Home Assistant downloads the log. Drag the file into this box rather than pasting it.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: I've removed passwords, tokens and anything private from what I attached.
+          required: true
+        - label: I've looked through the existing issues for this.
+          required: true

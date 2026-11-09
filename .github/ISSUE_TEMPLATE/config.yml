@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Patching, the Fledge app, or the thermostat itself
+    url: https://github.com/sysmoon14/fledge/issues/new/choose
+    about: Including reports of how Fledge went on your thermostat.
+  - name: A security problem
+    url: https://github.com/sysmoon14/fledge-homeassistant/security/advisories/new
+    about: Report it privately, please, not in a public issue.
