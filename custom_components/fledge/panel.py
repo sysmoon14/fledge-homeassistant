@@ -21,7 +21,7 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 
 from . import cards
 from .config_flow import options_from, thermostats
-from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
                     DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
 
 FRONTEND = Path(__file__).parent / "frontend"
@@ -84,6 +84,8 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "options": dict(entry.options),
         "device_id": device.id if device else None,
         "name": (device.name_by_user or device.name) if device else None,
+        "name_by_user": device.name_by_user if device else None,
+        "default_name": device.name if device else None,
         "sw_version": device.sw_version if device else None,
         "climate": first("climate"),
         "update": first("update"),
@@ -140,12 +142,13 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Optional(CONF_GLANCE, default=False): bool,
     vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_NAMES, default={}): {cv.entity_id: str},
+    vol.Optional(CONF_THERMOSTAT, default=0): vol.All(int, vol.Range(min=0)),
 })
 @websocket_api.require_admin
 @callback
 def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """A thermostat's cards and wake, as the options flow would save them,
-    and the cards' names."""
+    the cards' names, and where the thermostat's own card goes."""
     entry = hass.config_entries.async_get_entry(msg["entry_id"])
     if entry is None or entry.domain != DOMAIN:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "No such thermostat")
@@ -166,6 +169,7 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_WAKE_DEVICE: device if device in entities else None,
         CONF_GLANCE: msg[CONF_GLANCE],
         CONF_WEATHER: msg.get(CONF_WEATHER),
+        CONF_THERMOSTAT: msg[CONF_THERMOSTAT],
     }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()})
     hass.config_entries.async_update_entry(entry, options=options)
     connection.send_result(msg["id"], {"options": options})

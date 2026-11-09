@@ -17,6 +17,8 @@ CONF_GLANCE = "glance"
 CONF_WEATHER = "weather"
 # What a card is called on the Nest, where not its friendly name: by entity.
 CONF_NAMES = "names"
+# Where the thermostat's own card goes among them: before entities[n] (0, first).
+CONF_THERMOSTAT = "thermostat"
 # Before 0.4.4: rooms' lights, less some, then thermostats and media players.
 CONF_AREAS = "areas"
 CONF_EXCLUDE = "exclude"

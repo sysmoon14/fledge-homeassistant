@@ -499,6 +499,16 @@ def test_a_card_can_have_its_own_name_on_the_nest():
                         names={"light.lamp": "Reading"})
     assert [c["name"] for c in shown["cards"]] == ["Reading", "Fan"]
     assert shown["cards"][0]["lights"][0]["name"] == "Reading", "its one light too"
+    group = cards.named({"kind": "lights", "name": "Bedroom", "lights": [{"id": "light.bedroom", "name": "Bedroom"}],
+                         "members": [{"id": "light.a", "name": "A"}]}, "Upstairs")
+    assert (group["lights"][0]["name"], group["members"][0]["name"]) == ("Upstairs", "A"), "a group's own light; not its members"
+
+
+def test_the_thermostat_goes_where_it_is_put_among_the_cards() -> None:
+    states = {e: State(e, "on", friendly_name=e) for e in ("light.a", "light.b")}
+    shown = cards.cards(["light.a", "light.gone", "light.b"], states.get, thermostat=2)
+    assert shown["thermostat"] == 1, "among the cards shown: one Home Assistant doesn't know is left out"
+    assert "thermostat" not in cards.cards(["light.a"], states.get), "first: as before, nothing sent"
 
 
 async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, mqtt_mock, hass_ws_client) -> None:
@@ -556,12 +566,24 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     await client.send_json_auto_id({"type": "fledge/save", "entry_id": "nope", "entities": [], "wake": "chooser"})
     assert (await client.receive_json())["error"]["code"] == "not_found"
 
-    # The options flow keeps the names of the cards still shown.
+    # The thermostat's own card anywhere among them: after the fan.
+    await client.send_json_auto_id({"type": "fledge/save", "entry_id": entry.entry_id,
+                                    "entities": ["switch.fan", "light.lamp"], "wake": "chooser", "thermostat": 1,
+                                    "names": {"light.lamp": "Reading"}})
+    assert (await client.receive_json())["success"]
+    await hass.async_block_till_done()
+    assert entry.options["thermostat"] == 1
+    published = json.loads(_published(mqtt_mock)[-1][1])
+    assert published["thermostat"] == 1 and len(published["cards"]) == 2
+
+    # The options flow keeps the names of the cards still shown, and the
+    # thermostat's place within them.
     result = await hass.config_entries.options.async_init(entry.entry_id)
     await hass.config_entries.options.async_configure(result["flow_id"], {"entities": ["light.lamp"],
                                                                           "wake": "chooser"})
     await hass.async_block_till_done()
     assert entry.options["names"] == {"light.lamp": "Reading"}
+    assert entry.options["thermostat"] == 1
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

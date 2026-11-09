@@ -53,10 +53,12 @@ Thermostat (3rd generation) running Fledge, connected to Home Assistant over MQT
    order you want them, and what the thermostat wakes to.
 
 Change them any time from **Fledge** in the sidebar (admins only): drag the
-cards into the ring's order, rename one for the Nest, choose one to wake
-straight to, and turn a ring on the page to see each card as the Nest shows it.
-The same tabs set the wake and glance, try a notification, and show the
-thermostat's build and update. The integration's **Configure** still works too.
+cards into the ring's order (the thermostat's own card too, from Fledge v0.5 on
+the Nest; Settings stays last), rename one for the Nest or the thermostat
+itself, choose one to wake straight to, and turn a ring on the page to see each
+card drawn as the Nest draws it, in its Nest or Fledge look. The same tabs set
+the wake and glance, try a notification, and show the thermostat's builds, its
+update and a check for one. The integration's **Configure** still works too.
 A light group makes a whole room one card. Removing the integration puts the
 thermostat back as it was.
 
