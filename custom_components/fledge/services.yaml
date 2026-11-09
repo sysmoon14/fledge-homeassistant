@@ -37,3 +37,21 @@ dismiss:
       example: "washing"
       selector:
         text:
+
+set_schedule:
+  fields:
+    entity_id:
+      required: true
+      example: "climate.nest_thermostat"
+      selector:
+        entity:
+          integration: mqtt
+          domain: climate
+    heating:
+      example: '{"mon": [{"time": "06:30", "temp": 21}, {"time": "22:30", "temp": 16}], "tue": []}'
+      selector:
+        object:
+    hot_water:
+      example: '{"mon": [{"on": "06:00", "off": "08:00"}], "sat": []}'
+      selector:
+        object:

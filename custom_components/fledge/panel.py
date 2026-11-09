@@ -29,6 +29,9 @@ STATIC_URL = "/fledge_static"
 PANEL = "fledge"
 # The static path can't be taken back: registered once a run.
 _STATIC = f"{DOMAIN}_static"
+# The schedule cards' module, and the url it's loaded from while loaded.
+CARDS_JS = "fledge-schedule-card.js"
+_CARDS = f"{DOMAIN}_cards"
 # Longest name a card takes on the Nest.
 NAME_LENGTH = 40
 
@@ -42,12 +45,17 @@ def async_setup(hass: HomeAssistant) -> None:
 
 
 async def async_show(hass: HomeAssistant, version: str) -> None:
-    """The sidebar entry, while any thermostat is set up."""
+    """The sidebar entry and the schedule cards, while any thermostat is
+    set up. The cards' module loads on every page, as a card's resource
+    would, without touching the dashboards' own resources."""
     if hass.http is None:
         return
     if not hass.data.get(_STATIC):
         hass.data[_STATIC] = True
         await hass.http.async_register_static_paths([StaticPathConfig(STATIC_URL, str(FRONTEND), cache_headers=False)])
+    if not hass.data.get(_CARDS) and frontend.DATA_EXTRA_MODULE_URL in hass.data:
+        hass.data[_CARDS] = f"{STATIC_URL}/{CARDS_JS}?v={version}"
+        frontend.add_extra_js_url(hass, hass.data[_CARDS])
     if PANEL in hass.data.get(frontend.DATA_PANELS, {}):
         return
     await panel_custom.async_register_panel(
@@ -61,6 +69,8 @@ def async_hide(hass: HomeAssistant, leaving: ConfigEntry) -> None:
     """No sidebar entry once the last thermostat is unloaded."""
     if not [e for e in hass.config_entries.async_loaded_entries(DOMAIN) if e.entry_id != leaving.entry_id]:
         frontend.async_remove_panel(hass, PANEL, warn_if_unknown=False)
+        if url := hass.data.pop(_CARDS, None):
+            frontend.remove_extra_js_url(hass, url)
 
 
 def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:

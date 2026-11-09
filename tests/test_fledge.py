@@ -4,6 +4,7 @@ import json
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -588,3 +589,130 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert "fledge" not in hass.data[DATA_PANELS], "no thermostat: out of the sidebar"
+
+
+# ---- The Nest's own schedules: fledge.set_schedule and the cards' lookup.
+
+HEATING_WEEK = {"mon": [{"time": "06:30", "temp": 22}, {"time": "22:30", "temp": 16}], "tue": [], "wed": [], "thu": [],
+                "fri": [], "sat": [{"time": "07:30", "temp": 21}], "sun": []}
+
+
+def _nest_entities(hass: HomeAssistant, thermostat: dr.DeviceEntry, hot_water: bool = True) -> None:
+    registry = er.async_get(hass)
+    own = [("climate", "climate", "nest_thermostat"), ("sensor", "heating_times", "nest_thermostat_heating_times")]
+    if hot_water:
+        own += [("sensor", "hot_water_times", "nest_thermostat_hot_water_times"),
+                ("switch", "hot_water_schedule", "nest_thermostat_hot_water_schedule")]
+    for domain, end, object_id in own:
+        registry.async_get_or_create(domain, "mqtt", f"nestlocal_{SERIAL.lower()}_{end}", device_id=thermostat.id,
+                                     suggested_object_id=object_id)
+    hass.states.async_set("sensor.nest_thermostat_heating_times", "3", HEATING_WEEK)
+
+
+async def _with_schedules(hass: HomeAssistant, hot_water: bool = True) -> None:
+    _nest_entities(hass, _thermostat(hass), hot_water)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+
+def _sent(mqtt_mock, topic: str) -> list:
+    return [json.loads(c.args[1]) for c in mqtt_mock.async_publish.call_args_list if c.args[0] == topic]
+
+
+def test_the_setpoint_now_carries_on_from_days_before():
+    from custom_components.fledge.schedule import current
+    assert current(HEATING_WEEK, 0, "12:00") == 22
+    assert current(HEATING_WEEK, 0, "06:00") == 21, "Monday before its first: Saturday's last"
+    assert current(HEATING_WEEK, 3, "09:00") == 16, "a day with none: Monday's last"
+    assert current({}, 0, "09:00") is None
+
+
+async def test_copying_a_day_is_one_write(hass: HomeAssistant, mqtt_mock) -> None:
+    await _with_schedules(hass)
+    hass.states.async_set("climate.nest_thermostat", "heat", {"temperature": 16, "preset_mode": "none"})
+    set_temperature = async_mock_service(hass, "climate", "set_temperature")
+    monday = [{"time": "06:30", "temp": 22}, {"time": "22:30", "temp": 16}]
+    await hass.services.async_call(DOMAIN, "set_schedule", {
+        "entity_id": "climate.nest_thermostat",
+        "heating": {d: monday for d in ("tue", "wed", "thu", "fri")}}, blocking=True)
+    sent = _sent(mqtt_mock, f"nestlocal/{SERIAL}/set/heating_times")
+    assert sent == [{d: [{"time": "06:30", "temp": 22.0}, {"time": "22:30", "temp": 16.0}] for d in ("tue", "wed", "thu", "fri")}]
+    # What applies now, from the week as written, set on the Nest.
+    from custom_components.fledge.schedule import current
+    week = {**HEATING_WEEK, **{d: monday for d in ("tue", "wed", "thu", "fri")}}
+    now = dt_util.now()
+    expected = current(week, now.weekday(), now.strftime("%H:%M"))
+    assert [c.data["temperature"] for c in set_temperature] == ([] if expected == 16 else [expected])
+
+    await hass.services.async_call(DOMAIN, "set_schedule", {
+        "entity_id": "sensor.nest_thermostat_hot_water_times",
+        "hot_water": {"sat": [{"on": "22:00", "off": "00:30"}, {"on": "06:00:00", "off": "07:00"}], "sun": []}},
+        blocking=True)
+    assert _sent(mqtt_mock, f"nestlocal/{SERIAL}/set/hot_water_times") == [
+        {"sat": [{"on": "06:00", "off": "07:00"}, {"on": "22:00", "off": "00:30"}], "sun": []}], "any of the Nest's entities"
+
+
+async def test_eco_keeps_its_temperature(hass: HomeAssistant, mqtt_mock) -> None:
+    await _with_schedules(hass)
+    hass.states.async_set("climate.nest_thermostat", "heat", {"temperature": 9.5, "preset_mode": "eco"})
+    set_temperature = async_mock_service(hass, "climate", "set_temperature")
+    await hass.services.async_call(DOMAIN, "set_schedule", {
+        "entity_id": "climate.nest_thermostat", "heating": {"mon": [{"time": "00:00", "temp": 25}]}}, blocking=True)
+    assert not set_temperature
+
+
+async def test_a_schedule_the_nest_would_refuse_is_refused_here(hass: HomeAssistant, mqtt_mock) -> None:
+    import pytest
+    import voluptuous as vol
+    from homeassistant.exceptions import ServiceValidationError
+    await _with_schedules(hass, hot_water=False)
+    hass.states.async_set("light.lamp", "on")
+    bad = [
+        {"heating": {"mon": [{"time": "6:30", "temp": 20}]}},
+        {"heating": {"mon": [{"time": "06:30", "temp": 40}]}},
+        {"heating": {"mon": [{"time": "06:30", "temp": 20}, {"time": "06:30", "temp": 21}]}},
+        {"heating": {"someday": []}},
+        {"hot_water": {"mon": [{"on": "06:00", "off": "08:00"}, {"on": "07:00", "off": "09:00"}]}},
+        {"hot_water": {"mon": [{"on": "06:00", "off": "07:00"}, {"on": "23:00", "off": "06:30"}]}},
+        {},
+    ]
+    for data in bad:
+        with pytest.raises(vol.Invalid):
+            await hass.services.async_call(DOMAIN, "set_schedule", {"entity_id": "climate.nest_thermostat", **data},
+                                           blocking=True)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, "set_schedule", {"entity_id": "climate.nest_thermostat",
+                                                                "hot_water": {"mon": []}}, blocking=True)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, "set_schedule", {"entity_id": "light.lamp", "heating": {"mon": []}},
+                                       blocking=True)
+    assert not _sent(mqtt_mock, f"nestlocal/{SERIAL}/set/heating_times")
+
+
+async def test_the_cards_find_the_nest_s_schedules(hass: HomeAssistant, mqtt_mock, hass_ws_client) -> None:
+    await _with_schedules(hass)
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "fledge/schedule", "entity_id": "climate.nest_thermostat"})
+    assert (await client.receive_json())["result"] == {
+        "serial": SERIAL, "climate": "climate.nest_thermostat", "heating": "sensor.nest_thermostat_heating_times",
+        "hot_water": "sensor.nest_thermostat_hot_water_times",
+        "hot_water_switch": "switch.nest_thermostat_hot_water_schedule", "auto_schedule": None}
+    await client.send_json_auto_id({"type": "fledge/schedule", "entity_id": "climate.elsewhere"})
+    assert (await client.receive_json())["error"]["code"] == "not_found"
+
+
+async def test_the_schedule_cards_load_while_a_thermostat_is_set_up(hass: HomeAssistant, mqtt_mock) -> None:
+    from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL, UrlManager
+    # The frontend, as far as extra modules go (its build isn't installed here).
+    hass.data[DATA_EXTRA_MODULE_URL] = UrlManager(lambda *_: None, [])
+    _thermostat(hass)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    loaded = [u for u in hass.data[DATA_EXTRA_MODULE_URL].urls if "fledge-schedule-card.js" in u]
+    assert len(loaded) == 1 and loaded[0].startswith("/fledge_static/fledge-schedule-card.js?v=")
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not [u for u in hass.data[DATA_EXTRA_MODULE_URL].urls if "fledge-schedule-card.js" in u]

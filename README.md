@@ -153,6 +153,51 @@ automation:
           entity_id: lock.back_door
 ```
 
+## The Nest's schedules on your dashboards
+
+Fledge brings two dashboard cards for the Nest's own weekly schedules, heating
+and hot water. There's nothing to add under Resources: they load with the
+integration.
+
+```yaml
+type: custom:fledge-heating-schedule
+entity: climate.nest_thermostat
+```
+
+```yaml
+type: custom:fledge-hot-water-schedule
+entity: climate.nest_thermostat
+```
+
+Each shows the week, today and the time now marked. Tap a day or Edit schedule
+to change it: a day at a time, with every changed day saved together. **Copy
+to…** gives the day you're on to any others (Weekdays, Weekend, Every day, or
+picked one by one) in a single write, with Undo for a few seconds after. On the
+hot water card the pill pauses and resumes the schedule; on the heating card it
+opens the thermostat.
+
+The editor opens in the card's own dialog. To use your own popup instead, give
+the card `edit: '#your_popup'` and put `custom:fledge-heating-schedule-editor`
+(or `fledge-hot-water-schedule-editor`) with the same `entity` in that popup.
+
+The cards write with `fledge.set_schedule`, which automations can use too. It
+replaces the days it names and keeps the rest:
+
+```yaml
+action: fledge.set_schedule
+data:
+  entity_id: climate.nest_thermostat
+  heating:
+    sat: [{ time: "08:00", temp: 21 }, { time: "22:30", temp: 16 }]
+    sun: [{ time: "08:00", temp: 21 }, { time: "22:30", temp: 16 }]
+  hot_water:
+    sat: [{ on: "07:00", off: "08:00" }]
+```
+
+Writing the heating schedule turns the Nest's Auto-Schedule off, as any edit of
+its schedule does, and sets the temperature that applies now unless the Nest is
+in Eco.
+
 ## Updates
 
 This integration and the thermostat's software are released apart, and talk

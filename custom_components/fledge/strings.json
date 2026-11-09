@@ -132,6 +132,32 @@
           "description": "The tag it was shown with."
         }
       }
+    },
+    "set_schedule": {
+      "name": "Set the Nest's schedule",
+      "description": "Replaces the named days of a Nest's own weekly schedule, heating or hot water or both, in one write; the other days are kept. An empty list leaves a day with no changes. Writing the heating schedule turns Auto-Schedule off, and sets the temperature that applies now unless the Nest is in Eco.",
+      "fields": {
+        "entity_id": {
+          "name": "Thermostat",
+          "description": "The Nest's thermostat, or any other of its own entities."
+        },
+        "heating": {
+          "name": "Heating",
+          "description": "Days to replace, each a list of changes: {\"mon\": [{\"time\": \"06:30\", \"temp\": 21}], ...}."
+        },
+        "hot_water": {
+          "name": "Hot water",
+          "description": "Days to replace, each a list of on periods: {\"mon\": [{\"on\": \"06:00\", \"off\": \"08:00\"}], ...}."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_a_nest": {
+      "message": "{entity_id} doesn't belong to a Nest thermostat running Fledge."
+    },
+    "no_hot_water": {
+      "message": "The Nest {serial} has no hot water schedule."
     }
   }
 }
