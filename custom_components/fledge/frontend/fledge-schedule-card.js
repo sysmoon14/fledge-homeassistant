@@ -186,6 +186,23 @@
     }).join('');
   };
 
+  // A time as two pickers, 24-hour whatever the device's clock: hours, and
+  // minutes in quarters (with the minute it has, where that's not one).
+  const timeField = (role, m, label) => {
+    const h = Math.floor(m / 60) % 24; const mm = m % 60;
+    const mins = [0, 15, 30, 45].includes(mm) ? [0, 15, 30, 45] : [0, 15, 30, 45, mm].sort((a, b) => a - b);
+    const opt = (v, on) => `<option value="${v}"${on ? ' selected' : ''}>${String(v).padStart(2, '0')}</option>`;
+    return `<span class="tf ${role}"><ha-icon icon="mdi:clock-outline"></ha-icon>`
+      + `<select class="tsel hh" aria-label="${label}, hour">${Array.from({ length: 24 }, (_, v) => opt(v, v === h)).join('')}</select>`
+      + '<span class="colon">:</span>'
+      + `<select class="tsel mm" aria-label="${label}, minutes">${mins.map((v) => opt(v, v === mm)).join('')}</select></span>`;
+  };
+  // Calls back with the minutes of the day as either picker changes.
+  const onTime = (field, fn) => {
+    const read = () => parseInt(field.querySelector('.hh').value, 10) * 60 + parseInt(field.querySelector('.mm').value, 10);
+    field.querySelectorAll('select').forEach((sel) => sel.addEventListener('change', () => fn(read())));
+  };
+
   const navigate = (path) => {
     history.pushState(null, '', path.startsWith('#') ? location.pathname + location.search + path : path);
     window.dispatchEvent(new CustomEvent('location-changed', { detail: { replace: false } }));
@@ -365,10 +382,11 @@
     .tf:hover { border-color: color-mix(in srgb, var(--secondary-text-color) 60%, transparent); }
     .tf:focus-within { border-color: var(--fs-accent); box-shadow: 0 0 0 1px var(--fs-accent); }
     .tf ha-icon { --mdc-icon-size: 16px; color: var(--secondary-text-color); flex: none; }
-    input.time { font: inherit; font-size: 15px; font-weight: 600; border: none; background: transparent; color: inherit; font-variant-numeric: tabular-nums;
-      padding: 0; margin: 0; color-scheme: light dark; width: 5.2ch; min-width: 0; cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; }
-    input.time::-webkit-calendar-picker-indicator { display: none; }
-    input.time::-webkit-date-and-time-value { text-align: left; }
+    .tf { gap: 2px; padding: 0 4px 0 10px; }
+    .tf .colon { font-size: 15px; font-weight: 700; }
+    select.tsel { font: inherit; font-size: 15px; font-weight: 600; border: none; background: transparent; color: inherit; font-variant-numeric: tabular-nums;
+      padding: 0 2px; margin: 0; height: 34px; cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; color-scheme: light dark; text-align: center; }
+    select.tsel:focus-visible { background: color-mix(in srgb, var(--fs-accent) 15%, transparent); border-radius: 6px; }
     .temp { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .temp .v { min-width: 38px; text-align: center; }
     .rb, .del { width: 34px; height: 34px; border: none; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
@@ -550,7 +568,7 @@
         this._limits = { step, minT, maxT };
         rows = list.map((x, i) => `
           <div class="ev" data-i="${i}">
-            <label class="tf"><ha-icon icon="mdi:clock-outline"></ha-icon><input class="time st" type="time" step="900" value="${hhmm(x.m)}" aria-label="Change time"></label>
+            ${timeField('st', x.m, 'Time')}
             <span></span>
             <div class="temp"><button class="rb dn" aria-label="Cooler"${x.t - step < minT ? ' disabled' : ''}><ha-icon icon="${ICON.minus}"></ha-icon></button>
               <span class="v">${fmtT(x.t)}</span>
@@ -560,8 +578,8 @@
       } else {
         rows = list.map((p, i) => `
           <div class="ev water" data-i="${i}">
-            <span class="lbl">From</span><label class="tf"><ha-icon icon="mdi:clock-outline"></ha-icon><input class="time st" type="time" step="900" value="${hhmm(p.s)}" aria-label="On at"></label>
-            <span class="lbl">to</span><label class="tf"><ha-icon icon="mdi:clock-outline"></ha-icon><input class="time en" type="time" step="900" value="${hhmm(p.e % DAY_MIN)}" aria-label="Off at"></label>
+            <span class="lbl">From</span>${timeField('st', p.s, 'On at')}
+            <span class="lbl">to</span>${timeField('en', p.e % DAY_MIN, 'Off at')}
             <span class="lbl">${p.e > DAY_MIN ? 'next day' : ''}</span>
             <button class="del" aria-label="Remove"><ha-icon icon="${ICON.del}"></ha-icon></button>
           </div>`).join('');
@@ -582,31 +600,21 @@
       const list = this._draft(week, this._day);
       const re = () => { this._error = ''; this._render(true); };
       sr.querySelectorAll('.dchip').forEach((b) => b.addEventListener('click', () => { this._day = b.dataset.day; re(); }));
-      sr.querySelectorAll('.tf').forEach((f) => f.addEventListener('click', (e) => {
-        const inp = f.querySelector('input');
-        if (e.target !== inp) inp.focus();
-        try { if (inp.showPicker) inp.showPicker(); } catch (_) { /* picker opens on focus where showPicker isn't allowed */ }
-      }));
       sr.querySelectorAll('.ev').forEach((row) => {
         const i = parseInt(row.dataset.i, 10);
-        const st = row.querySelector('.st');
+        const st = row.querySelector('.tf.st');
         if (heat) {
-          st.addEventListener('change', (e) => { if (!e.target.value) return; list[i].m = toMin(e.target.value); list.sort((a, b) => a.m - b.m); re(); });
+          onTime(st, (m) => { list[i].m = m; list.sort((a, b) => a.m - b.m); re(); });
           const { step, minT, maxT } = this._limits;
           row.querySelector('.dn').addEventListener('click', () => { list[i].t = Math.max(minT, Math.round((list[i].t - step) * 2) / 2); re(); });
           row.querySelector('.up').addEventListener('click', () => { list[i].t = Math.min(maxT, Math.round((list[i].t + step) * 2) / 2); re(); });
         } else {
-          st.addEventListener('change', (e) => {
-            if (!e.target.value) return;
+          onTime(st, (m) => {
             const len = list[i].e - list[i].s;
-            list[i].s = toMin(e.target.value); list[i].e = list[i].s + Math.max(15, len);
+            list[i].s = m; list[i].e = m + Math.max(15, len);
             list.sort((a, b) => a.s - b.s); re();
           });
-          row.querySelector('.en').addEventListener('change', (e) => {
-            if (!e.target.value) return;
-            const m = toMin(e.target.value);
-            list[i].e = m > list[i].s ? m : m + DAY_MIN; re();
-          });
+          onTime(row.querySelector('.tf.en'), (m) => { list[i].e = m > list[i].s ? m : m + DAY_MIN; re(); });
         }
         row.querySelector('.del').addEventListener('click', () => { list.splice(i, 1); re(); });
       });
