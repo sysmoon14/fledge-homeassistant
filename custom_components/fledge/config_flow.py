@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_SERIAL, CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, TOPIC_PREFIX,
+from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, TOPIC_PREFIX,
                     WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
 
 
@@ -55,7 +55,9 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
     })
 
 
-def _options(user_input: dict[str, Any]) -> dict[str, Any]:
+def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None) -> dict[str, Any]:
+    """The entry's options from the form's (or the panel's) answers, and
+    the cards' names on the Nest: only for cards still shown."""
     options = {CONF_ENTITIES: list(user_input.get(CONF_ENTITIES) or []),
                CONF_WAKE: user_input.get(CONF_WAKE, WAKE_CHOOSER)}
     if user_input.get(CONF_WAKE_DEVICE):
@@ -64,6 +66,9 @@ def _options(user_input: dict[str, Any]) -> dict[str, Any]:
         options[CONF_GLANCE] = True
     if user_input.get(CONF_WEATHER):
         options[CONF_WEATHER] = user_input[CONF_WEATHER]
+    names = {k: v for k, v in (names or {}).items() if k in options[CONF_ENTITIES] and v}
+    if names:
+        options[CONF_NAMES] = names
     return options
 
 
@@ -117,7 +122,7 @@ class FledgeConfigFlow(ConfigFlow, domain=DOMAIN):
         assert self._serial is not None
         if user_input is not None:
             return self.async_create_entry(title=_title(self.hass, self._serial),
-                                           data={CONF_SERIAL: self._serial}, options=_options(user_input))
+                                           data={CONF_SERIAL: self._serial}, options=options_from(user_input))
         return self.async_show_form(step_id="cards", data_schema=_cards_schema(self.hass, self._serial, {}))
 
     @staticmethod
@@ -131,7 +136,9 @@ class FledgeOptionsFlow(OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(data=_options(user_input))
+            # Names are the panel's: kept for the cards still shown.
+            names = self.config_entry.options.get(CONF_NAMES)
+            return self.async_create_entry(data=options_from(user_input, names))
         serial = self.config_entry.data[CONF_SERIAL]
         return self.async_show_form(step_id="init",
                                     data_schema=_cards_schema(self.hass, serial, dict(self.config_entry.options)))

@@ -30,9 +30,9 @@ from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
-from . import art, cards
+from . import art, cards, panel
 from .config_flow import thermostats
-from .const import (CONF_GLANCE, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (CONF_GLANCE, CONF_NAMES, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.services.async_register(DOMAIN, "notify", notify, schema=NOTIFY_SCHEMA,
                                  supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "dismiss", dismiss, schema=DISMISS_SCHEMA)
+    panel.async_setup(hass)
     return True
 
 
@@ -87,11 +88,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: FledgeConfigEntry) -> bo
     entry.async_on_unload(thermostat.async_stop)
     entry.async_on_unload(entry.add_update_listener(_reload))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await panel.async_show(hass, thermostat.version)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: FledgeConfigEntry) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
+    panel.async_hide(hass, entry)
+    return True
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -274,7 +279,7 @@ class Thermostat:
         sun = self.hass.states.get("sun.sun")
         night = sun is not None and sun.state == "below_horizon"
         shown = cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
-                            options.get(CONF_WAKE_DEVICE), night)
+                            options.get(CONF_WAKE_DEVICE), night, options.get(CONF_NAMES))
         if options.get(CONF_GLANCE):
             offset = dt_util.now().utcoffset()
             weather = self.hass.states.get(options[CONF_WEATHER]) if options.get(CONF_WEATHER) else None

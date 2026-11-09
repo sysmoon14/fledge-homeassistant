@@ -1,0 +1,171 @@
+"""Fledge in Home Assistant's sidebar: each thermostat's cards laid out in
+the ring's order, previewed as the Nest shows them, and saved to the
+entry's options (the same ones the options flow edits).
+
+One JS module (frontend/fledge-panel.js, no build step) and a few
+websocket commands; admins only, as the options are.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant.components import frontend, panel_custom, websocket_api
+from homeassistant.components.http import StaticPathConfig
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import config_validation as cv, entity_registry as er
+
+from . import cards
+from .config_flow import options_from, thermostats
+from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+                    DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
+
+FRONTEND = Path(__file__).parent / "frontend"
+STATIC_URL = "/fledge_static"
+PANEL = "fledge"
+# The static path can't be taken back: registered once a run.
+_STATIC = f"{DOMAIN}_static"
+# Longest name a card takes on the Nest.
+NAME_LENGTH = 40
+
+
+@callback
+def async_setup(hass: HomeAssistant) -> None:
+    """The panel's websocket commands."""
+    websocket_api.async_register_command(hass, ws_thermostats)
+    websocket_api.async_register_command(hass, ws_preview)
+    websocket_api.async_register_command(hass, ws_save)
+
+
+async def async_show(hass: HomeAssistant, version: str) -> None:
+    """The sidebar entry, while any thermostat is set up."""
+    if hass.http is None:
+        return
+    if not hass.data.get(_STATIC):
+        hass.data[_STATIC] = True
+        await hass.http.async_register_static_paths([StaticPathConfig(STATIC_URL, str(FRONTEND), cache_headers=False)])
+    if PANEL in hass.data.get(frontend.DATA_PANELS, {}):
+        return
+    await panel_custom.async_register_panel(
+        hass, frontend_url_path=PANEL, webcomponent_name="fledge-panel", sidebar_title="Fledge",
+        sidebar_icon="mdi:thermostat-box", module_url=f"{STATIC_URL}/fledge-panel.js?v={version}",
+        require_admin=True, config={})
+
+
+@callback
+def async_hide(hass: HomeAssistant, leaving: ConfigEntry) -> None:
+    """No sidebar entry once the last thermostat is unloaded."""
+    if not [e for e in hass.config_entries.async_loaded_entries(DOMAIN) if e.entry_id != leaving.entry_id]:
+        frontend.async_remove_panel(hass, PANEL, warn_if_unknown=False)
+
+
+def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    """One thermostat as the panel shows it: its options, its own entities
+    (the Nest's, over MQTT) and Fledge's, and what its build understands."""
+    serial = entry.data[CONF_SERIAL]
+    device = thermostats(hass).get(serial)
+    registry = er.async_get(hass)
+    own = er.async_entries_for_device(registry, device.id) if device else []
+    mine = er.async_entries_for_config_entry(registry, entry.entry_id)
+    running = getattr(entry, "runtime_data", None) if entry.state is ConfigEntryState.LOADED else None
+
+    def first(domain: str) -> str | None:
+        return next((e.entity_id for e in own if e.domain == domain), None)
+
+    return {
+        "entry_id": entry.entry_id,
+        "title": entry.title,
+        "serial": serial,
+        "loaded": running is not None,
+        "options": dict(entry.options),
+        "device_id": device.id if device else None,
+        "name": (device.name_by_user or device.name) if device else None,
+        "sw_version": device.sw_version if device else None,
+        "climate": first("climate"),
+        "update": first("update"),
+        "own": [e.entity_id for e in own],
+        "entities": {(e.unique_id or "").removeprefix(f"{serial}_"): e.entity_id for e in mine},
+        "protocol": running.protocol if running else None,
+        "needs": PROTOCOL,
+        "version": running.version if running else None,
+    }
+
+
+@websocket_api.websocket_command({vol.Required("type"): "fledge/thermostats"})
+@websocket_api.require_admin
+@callback
+def ws_thermostats(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The thermostats set up, and what can be a card."""
+    connection.send_result(msg["id"], {
+        "thermostats": [_thermostat(hass, entry) for entry in hass.config_entries.async_entries(DOMAIN)],
+        "domains": DOMAINS,
+    })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "fledge/preview",
+    vol.Required("entities"): [cv.entity_id],
+    vol.Optional("names", default={}): {cv.entity_id: str},
+    vol.Optional("climate"): vol.Any(None, cv.entity_id),
+})
+@websocket_api.require_admin
+@callback
+def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The cards as the thermostat would get them now, by entity: what the
+    panel draws. Entities Home Assistant doesn't know have none."""
+    get = hass.states.get
+    names = {k: v.strip()[:NAME_LENGTH] for k, v in msg["names"].items() if v.strip()}
+    shown = {}
+    for entity_id in msg["entities"]:
+        state = get(entity_id)
+        if state is not None:
+            shown[entity_id] = cards.named(cards.card(state, get), names.get(entity_id))
+    climate = get(msg["climate"]) if msg.get("climate") else None
+    connection.send_result(msg["id"], {
+        "cards": shown,
+        "thermostat": cards.climate(climate) if climate is not None and climate.domain == "climate" else None,
+    })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "fledge/save",
+    vol.Required("entry_id"): str,
+    vol.Required(CONF_ENTITIES): [cv.entity_id],
+    vol.Required(CONF_WAKE): vol.In([WAKE_CHOOSER, WAKE_AUTO, WAKE_THERMOSTAT]),
+    vol.Optional(CONF_WAKE_DEVICE): vol.Any(None, cv.entity_id),
+    vol.Optional(CONF_GLANCE, default=False): bool,
+    vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_id),
+    vol.Optional(CONF_NAMES, default={}): {cv.entity_id: str},
+})
+@websocket_api.require_admin
+@callback
+def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """A thermostat's cards and wake, as the options flow would save them,
+    and the cards' names."""
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    if entry is None or entry.domain != DOMAIN:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "No such thermostat")
+        return
+    own = set(_thermostat(hass, entry)["own"])
+    entities = list(dict.fromkeys(msg[CONF_ENTITIES]))
+    wrong = [e for e in entities if e.partition(".")[0] not in DOMAINS or e in own]
+    if wrong:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, f"Can't be a card: {', '.join(wrong)}")
+        return
+    if msg.get(CONF_WEATHER) and not msg[CONF_WEATHER].startswith("weather."):
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "Not a weather entity")
+        return
+    device = msg.get(CONF_WAKE_DEVICE)
+    options = options_from({
+        CONF_ENTITIES: entities,
+        CONF_WAKE: msg[CONF_WAKE],
+        CONF_WAKE_DEVICE: device if device in entities else None,
+        CONF_GLANCE: msg[CONF_GLANCE],
+        CONF_WEATHER: msg.get(CONF_WEATHER),
+    }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()})
+    hass.config_entries.async_update_entry(entry, options=options)
+    connection.send_result(msg["id"], {"options": options})

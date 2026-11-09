@@ -7,7 +7,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_ENTITIES, CONF_WAKE, CONF_WAKE_DEVICE, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT
+from .const import CONF_ENTITIES, CONF_NAMES, CONF_WAKE, CONF_WAKE_DEVICE, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT
 from .entity import FledgeEntity
 
 CHOOSER, THERMOSTAT, AUTO = "Device chooser", "Thermostat", "Automatic"
@@ -28,9 +28,10 @@ class WakeTo(FledgeEntity, SelectEntity):
     def _devices(self) -> dict[str, str]:
         """The devices by the names they show as, in the cards' order."""
         names: dict[str, str] = {}
+        renamed = self.entry.options.get(CONF_NAMES, {})
         for entity_id in self.entry.options.get(CONF_ENTITIES, []):
             state = self.hass.states.get(entity_id)
-            name = (state.attributes.get("friendly_name") if state else None) or entity_id
+            name = renamed.get(entity_id) or (state.attributes.get("friendly_name") if state else None) or entity_id
             names.setdefault(name, entity_id)
         return names
 

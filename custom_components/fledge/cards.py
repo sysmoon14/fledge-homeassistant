@@ -177,13 +177,25 @@ def glance(weather: State | None, offset: float) -> dict[str, Any]:
     return out
 
 
+def named(card: dict[str, Any], name: str | None) -> dict[str, Any]:
+    """A card called something else on the Nest: a light's card and its
+    one light both."""
+    if not name:
+        return card
+    card = {**card, "name": name}
+    if card.get("kind") == "lights" and not card.get("members") and card.get("lights"):
+        card["lights"] = [{**card["lights"][0], "name": name}, *card["lights"][1:]]
+    return card
+
+
 def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
-          night: bool = False) -> dict[str, Any]:
+          night: bool = False, names: Mapping[str, str] | None = None) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state
     from `get` (None: unknown to Home Assistant, left out), and what the
     thermostat wakes to: `device`'s place among the cards, else "chooser"
     or "thermostat" as `wake` says; "auto" picks: the first media player
-    playing, else at `night` the first light that's on, else the chooser."""
+    playing, else at `night` the first light that's on, else the chooser.
+    `names` renames cards, by entity."""
     shown = [state for state in map(get, entities) if state is not None]
     ids = [state.entity_id for state in shown]
     woken: Any = "thermostat" if wake == "thermostat" else "chooser"
@@ -193,7 +205,8 @@ def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str 
         woken = (playing or lit or ["chooser"])[0]
     if device in ids:
         woken = ids.index(device)
-    return {"cards": [card(state, get) for state in shown], "wake": woken}
+    names = names or {}
+    return {"cards": [named(card(state, get), names.get(state.entity_id)) for state in shown], "wake": woken}
 
 
 @dataclass

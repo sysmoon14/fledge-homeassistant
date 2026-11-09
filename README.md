@@ -52,8 +52,13 @@ Thermostat (3rd generation) running Fledge, connected to Home Assistant over MQT
    Devices & services (or add Fledge there by hand). Pick your devices, in the
    order you want them, and what the thermostat wakes to.
 
-Change them any time from the integration's **Configure**. A light group makes
-a whole room one card. Removing the integration puts the thermostat back as it was.
+Change them any time from **Fledge** in the sidebar (admins only): drag the
+cards into the ring's order, rename one for the Nest, choose one to wake
+straight to, and turn a ring on the page to see each card as the Nest shows it.
+The same tabs set the wake and glance, try a notification, and show the
+thermostat's build and update. The integration's **Configure** still works too.
+A light group makes a whole room one card. Removing the integration puts the
+thermostat back as it was.
 
 ## Make it yours with automations
 

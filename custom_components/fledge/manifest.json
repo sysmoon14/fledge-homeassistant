@@ -2,15 +2,18 @@
   "domain": "fledge",
   "name": "Fledge",
   "after_dependencies": [
+    "camera",
     "media_player",
-    "camera"
+    "panel_custom"
   ],
   "codeowners": [
     "@sysmoon14"
   ],
   "config_flow": true,
   "dependencies": [
-    "mqtt"
+    "http",
+    "mqtt",
+    "websocket_api"
   ],
   "documentation": "https://github.com/sysmoon14/fledge-homeassistant",
   "integration_type": "service",
@@ -19,5 +22,5 @@
   "mqtt": [
     "nestlocal/+/availability"
   ],
-  "version": "0.8.0"
+  "version": "0.9.0"
 }

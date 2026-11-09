@@ -15,6 +15,8 @@ CONF_WAKE_DEVICE = "wake_device"
 # the weather entity it shows.
 CONF_GLANCE = "glance"
 CONF_WEATHER = "weather"
+# What a card is called on the Nest, where not its friendly name: by entity.
+CONF_NAMES = "names"
 # Before 0.4.4: rooms' lights, less some, then thermostats and media players.
 CONF_AREAS = "areas"
 CONF_EXCLUDE = "exclude"

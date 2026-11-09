@@ -490,3 +490,79 @@ async def test_rooms_become_a_card_a_light(hass: HomeAssistant, mqtt_mock) -> No
                              "wake_device": "light.ceiling"}
     published = json.loads(_published(mqtt_mock)[-1][1])
     assert [c["name"] for c in published["cards"]] == ["Ceiling", "Lamp", "climate.utility"] and published["wake"] == 0
+
+
+def test_a_card_can_have_its_own_name_on_the_nest():
+    lamp = State("light.lamp", "on", friendly_name="Lamp", supported_color_modes=["brightness"], brightness=128)
+    fan = State("switch.fan", "off", friendly_name="Fan")
+    shown = cards.cards(["light.lamp", "switch.fan"], {s.entity_id: s for s in (lamp, fan)}.get,
+                        names={"light.lamp": "Reading"})
+    assert [c["name"] for c in shown["cards"]] == ["Reading", "Fan"]
+    assert shown["cards"][0]["lights"][0]["name"] == "Reading", "its one light too"
+
+
+async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, mqtt_mock, hass_ws_client) -> None:
+    from homeassistant.components.frontend import DATA_PANELS
+
+    thermostat = _thermostat(hass)
+    er.async_get(hass).async_get_or_create("climate", "mqtt", "nestlocal_thermostat", device_id=thermostat.id,
+                                           suggested_object_id="nest_thermostat")
+    hass.states.async_set("climate.nest_thermostat", "heat", {"temperature": 21, "current_temperature": 20.4,
+                                                              "hvac_action": "heating"})
+    hass.states.async_set("light.lamp", "on", {"friendly_name": "Lamp", "supported_color_modes": ["brightness"],
+                                               "brightness": 255})
+    hass.states.async_set("switch.fan", "off", {"friendly_name": "Fan"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["light.lamp"], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.data[DATA_PANELS]["fledge"].require_admin, "in the sidebar, for admins"
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "fledge/thermostats"})
+    found = (await client.receive_json())["result"]["thermostats"]
+    assert len(found) == 1
+    shown = found[0]
+    assert (shown["entry_id"], shown["serial"], shown["climate"], shown["loaded"]) == \
+        (entry.entry_id, SERIAL, "climate.nest_thermostat", True)
+    assert set(shown["entities"]) == {"keep_screen_on", "wake_to", "wake_screen"}
+
+    await client.send_json_auto_id({"type": "fledge/preview", "entities": ["light.lamp", "light.gone"],
+                                    "climate": "climate.nest_thermostat"})
+    preview = (await client.receive_json())["result"]
+    assert list(preview["cards"]) == ["light.lamp"], "unknown to Home Assistant: no card"
+    assert preview["cards"]["light.lamp"]["lights"][0]["brightness"] == 100
+    assert preview["thermostat"]["target"] == 21
+
+    await client.send_json_auto_id({"type": "fledge/save", "entry_id": entry.entry_id,
+                                    "entities": ["switch.fan", "light.lamp"], "wake": "auto",
+                                    "wake_device": "light.lamp", "glance": False,
+                                    "names": {"light.lamp": " Reading ", "switch.fan": "", "light.other": "X"}})
+    response = await client.receive_json()
+    assert response["success"], response
+    await hass.async_block_till_done()
+    assert entry.options == {"entities": ["switch.fan", "light.lamp"], "wake": "auto", "wake_device": "light.lamp",
+                             "names": {"light.lamp": "Reading"}}
+    published = json.loads(_published(mqtt_mock)[-1][1])
+    assert [c["name"] for c in published["cards"]] == ["Fan", "Reading"] and published["wake"] == 1
+    select = er.async_get(hass).async_get_entity_id("select", DOMAIN, f"{SERIAL}_wake_to")
+    assert hass.states.get(select).state == "Reading", "Wake to calls it so too"
+
+    await client.send_json_auto_id({"type": "fledge/save", "entry_id": entry.entry_id,
+                                    "entities": ["climate.nest_thermostat"], "wake": "chooser"})
+    response = await client.receive_json()
+    assert not response["success"], "the Nest's own thermostat isn't a card"
+    await client.send_json_auto_id({"type": "fledge/save", "entry_id": "nope", "entities": [], "wake": "chooser"})
+    assert (await client.receive_json())["error"]["code"] == "not_found"
+
+    # The options flow keeps the names of the cards still shown.
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(result["flow_id"], {"entities": ["light.lamp"],
+                                                                          "wake": "chooser"})
+    await hass.async_block_till_done()
+    assert entry.options["names"] == {"light.lamp": "Reading"}
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "fledge" not in hass.data[DATA_PANELS], "no thermostat: out of the sidebar"
