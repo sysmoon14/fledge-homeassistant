@@ -358,10 +358,17 @@
     .list { display: grid; gap: 8px; margin-top: 10px; }
     .ev { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 8px 6px 8px 12px; border-radius: 14px;
       background: var(--fs-inset); box-shadow: var(--fs-inset-shadow); }
-    .ev.water { grid-template-columns: auto auto auto auto minmax(0, 1fr) auto; }
+    .ev.water { grid-template-columns: auto auto auto auto minmax(0, 1fr) auto; gap: 6px; }
     .lbl { font-size: 12px; color: var(--secondary-text-color); }
-    input.time { font: inherit; font-size: 15px; font-weight: 600; border: none; background: transparent; color: var(--primary-text-color); font-variant-numeric: tabular-nums;
-      padding: 0; color-scheme: light dark; min-width: 0; }
+    .tf { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px; box-sizing: border-box; border-radius: 10px; cursor: pointer;
+      background: var(--fs-card); border: 1px solid color-mix(in srgb, var(--secondary-text-color) 30%, transparent); color: var(--primary-text-color); }
+    .tf:hover { border-color: color-mix(in srgb, var(--secondary-text-color) 60%, transparent); }
+    .tf:focus-within { border-color: var(--fs-accent); box-shadow: 0 0 0 1px var(--fs-accent); }
+    .tf ha-icon { --mdc-icon-size: 16px; color: var(--secondary-text-color); flex: none; }
+    input.time { font: inherit; font-size: 15px; font-weight: 600; border: none; background: transparent; color: inherit; font-variant-numeric: tabular-nums;
+      padding: 0; margin: 0; color-scheme: light dark; width: 5.2ch; min-width: 0; cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; }
+    input.time::-webkit-calendar-picker-indicator { display: none; }
+    input.time::-webkit-date-and-time-value { text-align: left; }
     .temp { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .temp .v { min-width: 38px; text-align: center; }
     .rb, .del { width: 34px; height: 34px; border: none; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
@@ -543,7 +550,7 @@
         this._limits = { step, minT, maxT };
         rows = list.map((x, i) => `
           <div class="ev" data-i="${i}">
-            <input class="time st" type="time" step="900" value="${hhmm(x.m)}" aria-label="Time">
+            <label class="tf"><ha-icon icon="mdi:clock-outline"></ha-icon><input class="time st" type="time" step="900" value="${hhmm(x.m)}" aria-label="Change time"></label>
             <span></span>
             <div class="temp"><button class="rb dn" aria-label="Cooler"${x.t - step < minT ? ' disabled' : ''}><ha-icon icon="${ICON.minus}"></ha-icon></button>
               <span class="v">${fmtT(x.t)}</span>
@@ -553,8 +560,8 @@
       } else {
         rows = list.map((p, i) => `
           <div class="ev water" data-i="${i}">
-            <span class="lbl">From</span><input class="time st" type="time" step="900" value="${hhmm(p.s)}" aria-label="On at">
-            <span class="lbl">to</span><input class="time en" type="time" step="900" value="${hhmm(p.e % DAY_MIN)}" aria-label="Off at">
+            <span class="lbl">From</span><label class="tf"><ha-icon icon="mdi:clock-outline"></ha-icon><input class="time st" type="time" step="900" value="${hhmm(p.s)}" aria-label="On at"></label>
+            <span class="lbl">to</span><label class="tf"><ha-icon icon="mdi:clock-outline"></ha-icon><input class="time en" type="time" step="900" value="${hhmm(p.e % DAY_MIN)}" aria-label="Off at"></label>
             <span class="lbl">${p.e > DAY_MIN ? 'next day' : ''}</span>
             <button class="del" aria-label="Remove"><ha-icon icon="${ICON.del}"></ha-icon></button>
           </div>`).join('');
@@ -575,6 +582,11 @@
       const list = this._draft(week, this._day);
       const re = () => { this._error = ''; this._render(true); };
       sr.querySelectorAll('.dchip').forEach((b) => b.addEventListener('click', () => { this._day = b.dataset.day; re(); }));
+      sr.querySelectorAll('.tf').forEach((f) => f.addEventListener('click', (e) => {
+        const inp = f.querySelector('input');
+        if (e.target !== inp) inp.focus();
+        try { if (inp.showPicker) inp.showPicker(); } catch (_) { /* picker opens on focus where showPicker isn't allowed */ }
+      }));
       sr.querySelectorAll('.ev').forEach((row) => {
         const i = parseInt(row.dataset.i, 10);
         const st = row.querySelector('.st');
