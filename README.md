@@ -24,15 +24,15 @@ thermostat itself, each card's name above it. Turn to browse, press to open:
 
 | Card | Press | Turn | Long press | Its menu |
 |-|-|-|-|-|
-| 💡 **Light** | its dimmer | brightness | on / off | on / off, **warmth** and **colour** dials where it has them, and a group's **each light** |
-| 🔌 **Switch, fan** | on / off | | on / off | |
-| 🌡️ **Other thermostat** | its target | the temperature, as the Nest sets its own | | its presets: eco, away… |
-| 🔊 **Speaker** | its volume | the volume | play / pause | play / pause, previous, next; album art and progress on the card |
-| 🔥 **Option (select)** | its options | through them | | e.g. the Nest's hot water boost |
-| 🪟 **Blind, cover** | how open | the position | open / close | open, close |
-| ✨ **Scene, script, button** | runs it | | | |
-| 📷 **Camera** | a fresh picture | | | its latest still fills the card |
-| 🔥 **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
+| **Light** | its dimmer | brightness | on / off | on / off, **warmth** and **colour** dials where it has them, and a group's **each light** |
+| **Switch, fan** | on / off | | on / off | |
+| **Other thermostat** | its target | the temperature, as the Nest sets its own | | its presets: eco, away… |
+| **Speaker** | its volume | the volume | play / pause | play / pause, previous, next; album art and progress on the card |
+| **Option (select)** | its options | through them | | e.g. the Nest's hot water boost |
+| **Blind, cover** | how open | the position | open / close | open, close |
+| **Scene, script, button** | runs it | | | |
+| **Camera** | a fresh picture | | | its latest still fills the card |
+| **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
 
 Everything is drawn on the thermostat at 60 frames a second, in the Nest's own
 style, with its clicks. The Nest keeps running the heating throughout.

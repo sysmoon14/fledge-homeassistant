@@ -115,7 +115,9 @@
 
   // ---- Look: Home Assistant's theme, Origami's where a dashboard has it.
 
-  const heatColour = (t) => `color-mix(in srgb, var(--fs-heat) ${Math.max(12, Math.min(100, ((t - 16) / 5) * 100)).toFixed(0)}%, var(--fs-inset))`;
+  // How much of the heat colour a setpoint shows, of 100: 16° nearly none, 21° all.
+  const heatShare = (t) => Math.max(12, Math.min(100, ((t - 16) / 5) * 100));
+  const heatColour = (t) => `color-mix(in srgb, var(--fs-heat) ${heatShare(t).toFixed(0)}%, var(--fs-inset))`;
   const AXIS = '<div class="axis"><div></div><div class="ticks"><span style="left:0">00</span><span style="left:25%">06</span><span style="left:50%">12</span><span style="left:75%">18</span><span style="left:100%">24</span></div></div>';
   const ICON = {
     edit: 'mdi:pencil-outline', copy: 'mdi:content-copy', add: 'mdi:plus', del: 'mdi:trash-can-outline', close: 'mdi:close',
@@ -152,6 +154,8 @@
     .row.today .bar { outline: 1.5px solid color-mix(in srgb, var(--primary-text-color) 22%, transparent); outline-offset: 1px; }
     .seg, .blk { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
       color: var(--fs-on-accent); white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+    /* A low setpoint is mostly the card's own inset: the theme's text reads on it. */
+    .seg.low { color: var(--primary-text-color); }
     .blk { border-radius: 6px; background: color-mix(in srgb, var(--fs-water) 85%, var(--fs-inset)); }
     .blk.paused { filter: saturate(.25); opacity: .55; }
     .now { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--primary-text-color); border-radius: 2px;
@@ -173,7 +177,7 @@
     if (kind === HEATING) {
       return heatSlots(week, d).map((x) => {
         const w = ((x.e - x.s) / DAY_MIN) * 100;
-        return `<div class="seg" style="left:${(x.s / 14.4).toFixed(3)}%;width:${w.toFixed(3)}%;background:${x.t == null ? 'transparent' : heatColour(x.t)}"`
+        return `<div class="seg${x.t != null && heatShare(x.t) < 50 ? ' low' : ''}" style="left:${(x.s / 14.4).toFixed(3)}%;width:${w.toFixed(3)}%;background:${x.t == null ? 'transparent' : heatColour(x.t)}"`
           + ` title="${hhmm(x.s)}–${hhmm(x.e)} ${fmtT(x.t)}">${opts.labels !== false && w >= 7 && x.t != null ? fmtT(x.t) : ''}</div>`;
       }).join('');
     }

@@ -36,7 +36,7 @@ SETPOINT = (4.5, 35.0)
 MOST = 12
 # The thermostat's entities, by the end of their unique ids (nestlocal_<serial>_...).
 OWN = {"climate": "climate", "heating": "heating_times", "hot_water": "hot_water_times",
-       "hot_water_switch": "hot_water_schedule", "auto_schedule": "auto_schedule"}
+       "hot_water_switch": "hot_water_schedule", "auto_schedule": "learning_mode"}
 
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
