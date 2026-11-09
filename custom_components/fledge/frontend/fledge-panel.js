@@ -31,6 +31,18 @@ const WAKES = [
   ["chooser", "Device chooser", "The thermostat among your cards, zoomed out"],
   ["thermostat", "The thermostat", "As the Nest always did"],
 ];
+// Someone across the room (the Nest's Farsight) and someone close (its
+// approach reading), as Fledge's options name them.
+const FARS = [
+  ["glance", "The glance", "The time, the weather and what's on"],
+  ["wake", "What it wakes to", "As if the ring had turned"],
+  ["dark", "Nothing", "The screen stays dark"],
+];
+const NEARS = [
+  ["wake", "What it wakes to", "Without a touch"],
+  ["glance", "The glance", "The same as across the room"],
+  ["none", "Nothing more", "Only what across the room shows"],
+];
 const ACTIVE = ["on", "playing", "open", "heat", "cool", "heat_cool", "auto"];
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -615,7 +627,9 @@ class FledgePanel extends HTMLElement {
       order,
       wake: options.wake || "chooser",
       wake_device: options.wake_device || null,
-      glance: !!options.glance,
+      far: options.far || (options.glance ? "glance" : "wake"),
+      near: options.near || "wake",
+      card_idle: options.card_idle || 20,
       weather: options.weather || null,
       names: { ...(options.names || {}) },
       device_name: t?.name_by_user || "",
@@ -675,7 +689,8 @@ class FledgePanel extends HTMLElement {
     try {
       await this._hass.callWS({
         type: "fledge/save", entry_id: t.entry_id, entities, wake: d.wake, thermostat: this._place(),
-        wake_device: entities.includes(d.wake_device) ? d.wake_device : null, glance: d.glance,
+        wake_device: entities.includes(d.wake_device) ? d.wake_device : null, glance: d.far === "glance",
+        far: d.far, near: d.near, card_idle: d.card_idle,
         weather: d.weather || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
       });
       const name = d.device_name.trim();
@@ -858,7 +873,7 @@ class FledgePanel extends HTMLElement {
   }
 
   _tabs() {
-    const tabs = [["cards", "Cards"], ["wake", "Wake & glance"], ["notify", "Notifications"], ["thermostat", "Thermostat"]];
+    const tabs = [["cards", "Cards"], ["wake", "Wake & presence"], ["notify", "Notifications"], ["thermostat", "Thermostat"]];
     return `<nav class="tabs" role="tablist">${tabs.map(([k, label]) =>
       `<button role="tab" class="tab ${k === this._tab ? "on" : ""}" aria-selected="${k === this._tab}" data-act="tab" data-tab="${k}">${esc(label)}</button>`).join("")}</nav>`;
   }
@@ -984,6 +999,13 @@ class FledgePanel extends HTMLElement {
     return `<button class="switch ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(label)}" data-act="${act}"><span class="knob"></span></button>`;
   }
 
+  _presence(group, k, label, sub) {
+    const on = this._draft[group] === k;
+    return `<label class="opt ${on ? "on" : ""}">
+      <input type="radio" name="${group}" value="${k}" ${on ? "checked" : ""} data-input="${group}">
+      <span class="text"><span class="name">${esc(label)}</span><span class="sub">${esc(sub)}</span></span></label>`;
+  }
+
   _wakeTab() {
     const d = this._draft;
     const t = this._current;
@@ -1005,9 +1027,14 @@ class FledgePanel extends HTMLElement {
         ${option("card", "One of your cards", entities.length ? "Opened, ready to turn" : "Add a card first", chips)}
       </section>
       <section class="card pad">
-        <div class="kv flat"><h2>Glance</h2>${this._switch("glance", d.glance, "Glance when someone walks up")}</div>
-        <p class="muted small">When someone walks up rather than touches it, the Nest shows the time, the weather and what's playing.</p>
-        ${this._entityField("weather", "weather", "Weather", d.weather, !d.glance)}
+        <h2>Someone across the room</h2>
+        <p class="muted small">The Nest lights up as it sees someone across the room. Keep its Farsight on: that's how it sees them.</p>
+        ${FARS.map(([k, label, sub]) => this._presence("far", k, label, sub)).join("")}
+        <h2>Someone comes up to it</h2>
+        <p class="muted small">Close enough to reach it, without touching it.</p>
+        ${NEARS.map(([k, label, sub]) => this._presence("near", k, label, sub)).join("")}
+        <div class="field narrowfield"><label for="cardidle">Cards stay for (s)</label><input id="cardidle" type="number" min="5" max="600" value="${esc(d.card_idle)}" data-input="cardidle"></div>
+        ${this._entityField("weather", "weather", "Weather for the glance", d.weather, d.far !== "glance" && d.near !== "glance")}
         ${keep ? `<div class="kv"><span>Keep screen on<span class="sub">Applies straight away</span></span>${this._switch("keepon", keepOn, "Keep screen on")}</div>` : ""}
       </section>
     </div>`;
@@ -1138,7 +1165,6 @@ class FledgePanel extends HTMLElement {
         this._look = el.dataset.look;
         try { localStorage.setItem(LOOK_KEY, this._look); } catch (_) { /* only for now */ }
         break;
-      case "glance": d.glance = !d.glance; break;
       case "add": this._adding = true; this._query = ""; this._render(); this.shadowRoot.getElementById("search")?.focus(); return;
       case "closeadd": this._adding = false; break;
       case "addone": {
@@ -1199,6 +1225,12 @@ class FledgePanel extends HTMLElement {
         d.wake = el.value;
         d.wake_device = null;
       }
+      this._render();
+    } else if ((what === "far" || what === "near") && e.type === "change") {
+      d[what] = el.value;
+      this._render();
+    } else if (what === "cardidle" && e.type === "change") {
+      d.card_idle = Math.max(5, Math.min(600, Math.round(Number(el.value)) || 20));
       this._render();
     } else if (what === "pick" && e.type === "change") {
       this._choose(el.dataset.key, el.value);

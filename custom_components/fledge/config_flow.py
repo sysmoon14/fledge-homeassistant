@@ -11,8 +11,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, TOPIC_PREFIX,
-                    WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
+from .const import (CONF_CARD_IDLE, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+                    CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
+                    NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
 
 def thermostats(hass: HomeAssistant) -> dict[str, dr.DeviceEntry]:
@@ -45,11 +46,17 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
     wake = selector.SelectSelector(selector.SelectSelectorConfig(
         options=[WAKE_CHOOSER, WAKE_AUTO, WAKE_THERMOSTAT], translation_key="wake", mode=selector.SelectSelectorMode.LIST))
     device = selector.EntitySelector(selector.EntitySelectorConfig(domain=DOMAINS))
+    far, near, idle = presence(current)
+    choose = lambda key, options: selector.SelectSelector(selector.SelectSelectorConfig(  # noqa: E731
+        options=options, translation_key=key, mode=selector.SelectSelectorMode.LIST))
     return vol.Schema({
         vol.Optional(CONF_ENTITIES, description={"suggested_value": current.get(CONF_ENTITIES, [])}): devices,
         vol.Required(CONF_WAKE, default=current.get(CONF_WAKE, WAKE_CHOOSER)): wake,
         vol.Optional(CONF_WAKE_DEVICE, description={"suggested_value": current.get(CONF_WAKE_DEVICE)}): device,
-        vol.Optional(CONF_GLANCE, default=current.get(CONF_GLANCE, False)): selector.BooleanSelector(),
+        vol.Required(CONF_FAR, default=far): choose(CONF_FAR, [FAR_GLANCE, FAR_WAKE, FAR_DARK]),
+        vol.Required(CONF_NEAR, default=near): choose(CONF_NEAR, [NEAR_WAKE, NEAR_GLANCE, NEAR_NONE]),
+        vol.Required(CONF_CARD_IDLE, default=idle): selector.NumberSelector(selector.NumberSelectorConfig(
+            min=5, max=600, step=1, unit_of_measurement="s", mode=selector.NumberSelectorMode.BOX)),
         vol.Optional(CONF_WEATHER, description={"suggested_value": current.get(CONF_WEATHER)}):
             selector.EntitySelector(selector.EntitySelectorConfig(domain="weather")),
     })
@@ -63,8 +70,12 @@ def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None
                CONF_WAKE: user_input.get(CONF_WAKE, WAKE_CHOOSER)}
     if user_input.get(CONF_WAKE_DEVICE):
         options[CONF_WAKE_DEVICE] = user_input[CONF_WAKE_DEVICE]
-    if user_input.get(CONF_GLANCE):
+    far, near, idle = presence(user_input)
+    options[CONF_FAR], options[CONF_NEAR] = far, near
+    if far == FAR_GLANCE:
         options[CONF_GLANCE] = True
+    if user_input.get(CONF_CARD_IDLE):
+        options[CONF_CARD_IDLE] = max(5, min(600, int(idle)))
     if user_input.get(CONF_WEATHER):
         options[CONF_WEATHER] = user_input[CONF_WEATHER]
     place = user_input.get(CONF_THERMOSTAT)

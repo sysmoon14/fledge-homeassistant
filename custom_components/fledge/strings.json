@@ -20,15 +20,19 @@
           "entities": "Devices",
           "wake": "When the thermostat wakes",
           "wake_device": "Or open this device",
-          "glance": "A glance as someone comes near",
-          "weather": "Weather for the glance"
+          "weather": "Weather for the glance",
+          "far": "Someone across the room",
+          "near": "Someone comes up to it",
+          "card_idle": "Cards stay for"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
           "wake_device": "Wake straight into one of the devices above instead.",
-          "glance": "When the Nest lights up because someone walked up, rather than a touch, it shows the time, the weather and what's on. A touch shows what it wakes to.",
-          "weather": "A weather entity, for the glance."
+          "weather": "A weather entity, for the glance.",
+          "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
+          "near": "When someone comes close, without touching it.",
+          "card_idle": "How long the cards stay with nothing touched and nobody close, before going back to the glance (if someone is still about) or dark."
         }
       }
     },
@@ -47,15 +51,19 @@
           "entities": "Devices",
           "wake": "When the thermostat wakes",
           "wake_device": "Or open this device",
-          "glance": "A glance as someone comes near",
-          "weather": "Weather for the glance"
+          "weather": "Weather for the glance",
+          "far": "Someone across the room",
+          "near": "Someone comes up to it",
+          "card_idle": "Cards stay for"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
           "wake_device": "Wake straight into one of the devices above instead.",
-          "glance": "When the Nest lights up because someone walked up, rather than a touch, it shows the time, the weather and what's on. A touch shows what it wakes to.",
-          "weather": "A weather entity, for the glance."
+          "weather": "A weather entity, for the glance.",
+          "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
+          "near": "When someone comes close, without touching it.",
+          "card_idle": "How long the cards stay with nothing touched and nobody close, before going back to the glance (if someone is still about) or dark."
         }
       }
     }
@@ -66,6 +74,20 @@
         "chooser": "The device chooser: the thermostat among your devices, zoomed out",
         "auto": "Automatic: the speaker that's playing, else after sunset a light that's on, else the device chooser",
         "thermostat": "The thermostat, as the Nest always did"
+      }
+    },
+    "far": {
+      "options": {
+        "glance": "The glance: the time, the weather and what's on",
+        "wake": "What it wakes to",
+        "dark": "Nothing: the screen stays dark"
+      }
+    },
+    "near": {
+      "options": {
+        "wake": "What it wakes to, without a touch",
+        "glance": "The glance",
+        "none": "Nothing more than across the room"
       }
     }
   },
@@ -79,6 +101,12 @@
     "select": {
       "wake_to": {
         "name": "Wake to"
+      },
+      "across_the_room": {
+        "name": "Across the room"
+      },
+      "close_up": {
+        "name": "Close up"
       }
     },
     "switch": {

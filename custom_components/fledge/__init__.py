@@ -32,7 +32,7 @@ from homeassistant.util import dt as dt_util
 
 from . import art, cards, panel, schedule
 from .config_flow import thermostats
-from .const import (CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (FAR_GLANCE, presence, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -282,7 +282,10 @@ class Thermostat:
         shown = cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
                             options.get(CONF_WAKE_DEVICE), night, options.get(CONF_NAMES),
                             options.get(CONF_THERMOSTAT, 0))
-        if options.get(CONF_GLANCE):
+        far, near, idle = presence(options)
+        shown["presence"] = {"far": far, "near": near}
+        shown["card_idle"] = idle
+        if FAR_GLANCE in (far, near):
             offset = dt_util.now().utcoffset()
             weather = self.hass.states.get(options[CONF_WEATHER]) if options.get(CONF_WEATHER) else None
             shown["glance"] = cards.glance(weather, offset.total_seconds() if offset else 0)

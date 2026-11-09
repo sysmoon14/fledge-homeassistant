@@ -22,7 +22,8 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from . import cards
 from .config_flow import options_from, thermostats
 from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
-                    DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT)
+                    DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_FAR, CONF_NEAR,
+                    FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
 FRONTEND = Path(__file__).parent / "frontend"
 STATIC_URL = "/fledge_static"
@@ -150,6 +151,9 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Required(CONF_WAKE): vol.In([WAKE_CHOOSER, WAKE_AUTO, WAKE_THERMOSTAT]),
     vol.Optional(CONF_WAKE_DEVICE): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_GLANCE, default=False): bool,
+    vol.Optional(CONF_FAR): vol.In([FAR_GLANCE, FAR_WAKE, FAR_DARK]),
+    vol.Optional(CONF_NEAR): vol.In([NEAR_WAKE, NEAR_GLANCE, NEAR_NONE]),
+    vol.Optional(CONF_CARD_IDLE): vol.All(int, vol.Range(min=5, max=600)),
     vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_NAMES, default={}): {cv.entity_id: str},
     vol.Optional(CONF_THERMOSTAT, default=0): vol.All(int, vol.Range(min=0)),
@@ -178,6 +182,11 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_WAKE: msg[CONF_WAKE],
         CONF_WAKE_DEVICE: device if device in entities else None,
         CONF_GLANCE: msg[CONF_GLANCE],
+        # An older panel says only whether to glance: the rest kept.
+        CONF_FAR: msg.get(CONF_FAR) or (FAR_GLANCE if msg[CONF_GLANCE] else
+                                        FAR_DARK if presence(entry.options)[0] == FAR_DARK else FAR_WAKE),
+        CONF_NEAR: msg.get(CONF_NEAR) or presence(entry.options)[1],
+        CONF_CARD_IDLE: msg.get(CONF_CARD_IDLE) or entry.options.get(CONF_CARD_IDLE),
         CONF_WEATHER: msg.get(CONF_WEATHER),
         CONF_THERMOSTAT: msg[CONF_THERMOSTAT],
     }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()})

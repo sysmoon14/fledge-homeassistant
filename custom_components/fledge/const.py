@@ -15,6 +15,15 @@ CONF_WAKE_DEVICE = "wake_device"
 # the weather entity it shows.
 CONF_GLANCE = "glance"
 CONF_WEATHER = "weather"
+# Someone across the room (the Nest's Farsight lights it) and someone close
+# (its approach reading), and how long the cards stay untouched: protocol 6.
+# Without CONF_FAR, the glance switch says (glance, else wake).
+CONF_FAR = "far"
+CONF_NEAR = "near"
+CONF_CARD_IDLE = "card_idle"
+FAR_GLANCE, FAR_WAKE, FAR_DARK = "glance", "wake", "dark"
+NEAR_WAKE, NEAR_GLANCE, NEAR_NONE = "wake", "glance", "none"
+CARD_IDLE = 20
 # What a card is called on the Nest, where not its friendly name: by entity.
 CONF_NAMES = "names"
 # Where the thermostat's own card goes among them: before entities[n] (0, first).
@@ -44,12 +53,21 @@ COMMAND_TOPIC = "{prefix}/{serial}/ui/command"
 # What of the cards the thermostat's build understands (retained).
 PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
 # What this integration needs of it: nestlocal's ui::PROTOCOL.
-PROTOCOL = 4
+PROTOCOL = 6
 # Asks the thermostat to look for its own update now (its button's command).
 CHECK_TOPIC = "{prefix}/{serial}/set/check_update"
 # Keeps the thermostat's display lit (ON/OFF, retained), and wakes it.
 SCREEN_ON_TOPIC = "{prefix}/{serial}/set/screen_on"
 SCREEN_WAKE_TOPIC = "{prefix}/{serial}/set/screen_wake"
+
+
+def presence(options) -> tuple[str, str, int]:
+    """What someone across the room and someone close bring, and how long
+    the cards stay untouched (seconds), from an entry's options."""
+    far = options.get(CONF_FAR) or (FAR_GLANCE if options.get(CONF_GLANCE) else FAR_WAKE)
+    return far, options.get(CONF_NEAR) or NEAR_WAKE, int(options.get(CONF_CARD_IDLE) or CARD_IDLE)
+
+
 # The entities on the cards' device.
 PLATFORMS = ["select", "switch", "button"]
 # A notification (fledge.notify), and the event its answer fires.

@@ -217,17 +217,19 @@ async def test_choosing_the_thermostat_and_its_cards(hass: HomeAssistant, mqtt_m
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == f"Nest Thermostat ({SERIAL})"
     assert result["data"] == {"serial": SERIAL}
-    assert result["options"] == {"entities": ["light.lamp", "climate.utility"], "wake": "thermostat"}
+    assert result["options"] == {"entities": ["light.lamp", "climate.utility"], "wake": "thermostat",
+                                 "far": "wake", "near": "wake", "card_idle": 20}
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "init", "one page"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"entities": ["climate.utility", "light.lamp"], "wake": "chooser",
-                            "wake_device": "light.lamp"})
+                            "wake_device": "light.lamp", "far": "glance", "near": "none", "card_idle": 45})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options == {"entities": ["climate.utility", "light.lamp"], "wake": "chooser",
-                             "wake_device": "light.lamp"}
+                             "wake_device": "light.lamp", "far": "glance", "near": "none", "glance": True,
+                             "card_idle": 45}
 
 
 async def test_set_up_by_hand_while_discovered(hass: HomeAssistant, mqtt_mock) -> None:
@@ -366,10 +368,10 @@ async def test_on_the_thermostat_s_device_and_its_build_checked(hass: HomeAssist
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
     await hass.async_block_till_done()
     assert issue() is not None, "a build that never says is too old"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "4")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "6")
     await hass.async_block_till_done()
     assert issue() is None, "updated: the repair goes"
-    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "3")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "5")
     await hass.async_block_till_done()
     assert issue() is not None
 
@@ -537,7 +539,7 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     shown = found[0]
     assert (shown["entry_id"], shown["serial"], shown["climate"], shown["loaded"]) == \
         (entry.entry_id, SERIAL, "climate.nest_thermostat", True)
-    assert set(shown["entities"]) == {"keep_screen_on", "wake_to", "wake_screen"}
+    assert set(shown["entities"]) == {"keep_screen_on", "wake_to", "wake_screen", "across_the_room", "close_up"}
 
     await client.send_json_auto_id({"type": "fledge/preview", "entities": ["light.lamp", "light.gone"],
                                     "climate": "climate.nest_thermostat"})
@@ -554,7 +556,8 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     assert response["success"], response
     await hass.async_block_till_done()
     assert entry.options == {"entities": ["switch.fan", "light.lamp"], "wake": "auto", "wake_device": "light.lamp",
-                             "names": {"light.lamp": "Reading"}}
+                             "far": "wake", "near": "wake", "names": {"light.lamp": "Reading"}}, \
+        "an older panel's save: who's about as it was"
     published = json.loads(_published(mqtt_mock)[-1][1])
     assert [c["name"] for c in published["cards"]] == ["Fan", "Reading"] and published["wake"] == 1
     select = er.async_get(hass).async_get_entity_id("select", DOMAIN, f"{SERIAL}_wake_to")
@@ -716,3 +719,35 @@ async def test_the_schedule_cards_load_while_a_thermostat_is_set_up(hass: HomeAs
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert not [u for u in hass.data[DATA_EXTRA_MODULE_URL].urls if "fledge-schedule-card.js" in u]
+
+
+async def test_across_the_room_and_close_up_reach_the_thermostat(hass: HomeAssistant, mqtt_mock) -> None:
+    hass.states.async_set("light.lamp", "on", {"friendly_name": "Lamp"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["light.lamp"], "wake": "chooser", "glance": True})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    published = json.loads(_published(mqtt_mock)[-1][1])
+    assert published["presence"] == {"far": "glance", "near": "wake"}, "a glance from before: across the room"
+    assert published["card_idle"] == 20 and "glance" in published
+    ids = {key: er.async_get(hass).async_get_entity_id("select", DOMAIN, f"{SERIAL}_{key}")
+           for key in ("across_the_room", "close_up")}
+    assert hass.states.get(ids["across_the_room"]).state == "Glance"
+    assert hass.states.get(ids["close_up"]).state == "What it wakes to"
+    thermostat = entry.runtime_data
+    await hass.services.async_call("select", "select_option",
+                                   {"entity_id": ids["across_the_room"], "option": "Stay dark"}, blocking=True)
+    await hass.services.async_call("select", "select_option",
+                                   {"entity_id": ids["close_up"], "option": "Glance"}, blocking=True)
+    await hass.async_block_till_done()
+    assert entry.runtime_data is thermostat, "no reload"
+    published = json.loads(_published(mqtt_mock)[-1][1])
+    assert published["presence"] == {"far": "dark", "near": "glance"}
+    assert "glance" in published, "close up still glances"
+    assert "glance" not in entry.options
+    assert hass.states.get(ids["across_the_room"]).state == "Stay dark"
+    await hass.services.async_call("select", "select_option",
+                                   {"entity_id": ids["close_up"], "option": "Nothing"}, blocking=True)
+    await hass.async_block_till_done()
+    assert "glance" not in json.loads(_published(mqtt_mock)[-1][1])
