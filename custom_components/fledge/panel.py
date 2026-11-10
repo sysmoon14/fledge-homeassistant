@@ -21,7 +21,8 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 
 from . import cards
 from .config_flow import options_from, thermostats
-from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+from .feeds import option_switch, regulates_from_a_sensor
+from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
                     DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
@@ -103,6 +104,12 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "own": [e.entity_id for e in own],
         "entities": {(e.unique_id or "").removeprefix(f"{serial}_"): e.entity_id for e in mine},
         "protocol": running.protocol if running else None,
+        # Whether it regulates from a room thermometer it's sent (nestlocal's
+        # -external-temperature): only then does the room sensor do anything.
+        "room_sensor": regulates_from_a_sensor(hass, serial),
+        # The switch that turns that option on (and reboots the Nest), on a
+        # build that has it.
+        "room_sensor_switch": option_switch(hass, serial),
         "needs": PROTOCOL,
         "version": running.version if running else None,
     }
@@ -155,6 +162,8 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Optional(CONF_NEAR): vol.In([NEAR_WAKE, NEAR_GLANCE, NEAR_NONE]),
     vol.Optional(CONF_CARD_IDLE): vol.All(int, vol.Range(min=5, max=600)),
     vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_id),
+    vol.Optional(CONF_OUTDOOR): vol.Any(None, cv.entity_id),
+    vol.Optional(CONF_ROOM_SENSOR): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_NAMES, default={}): {cv.entity_id: str},
     vol.Optional(CONF_THERMOSTAT, default=0): vol.All(int, vol.Range(min=0)),
 })
@@ -176,6 +185,10 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
     if msg.get(CONF_WEATHER) and not msg[CONF_WEATHER].startswith("weather."):
         connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "Not a weather entity")
         return
+    for key in (CONF_OUTDOOR, CONF_ROOM_SENSOR):
+        if msg.get(key) and not msg[key].startswith("sensor."):
+            connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "Not a sensor")
+            return
     device = msg.get(CONF_WAKE_DEVICE)
     options = options_from({
         CONF_ENTITIES: entities,
@@ -188,6 +201,9 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_NEAR: msg.get(CONF_NEAR) or presence(entry.options)[1],
         CONF_CARD_IDLE: msg.get(CONF_CARD_IDLE) or entry.options.get(CONF_CARD_IDLE),
         CONF_WEATHER: msg.get(CONF_WEATHER),
+        # An older panel doesn't send these: kept.
+        CONF_OUTDOOR: msg[CONF_OUTDOOR] if CONF_OUTDOOR in msg else entry.options.get(CONF_OUTDOOR),
+        CONF_ROOM_SENSOR: msg[CONF_ROOM_SENSOR] if CONF_ROOM_SENSOR in msg else entry.options.get(CONF_ROOM_SENSOR),
         CONF_THERMOSTAT: msg[CONF_THERMOSTAT],
     }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()})
     hass.config_entries.async_update_entry(entry, options=options)

@@ -118,7 +118,8 @@ chime: an icon, a title and a message, or a camera's picture, taken there and
 then, filling the round screen. Press to answer it, hold to dismiss it; either
 fires a `fledge_notification` event with its tag, so an automation can act on
 the answer. It dismisses itself after `timeout` seconds, and `fledge.dismiss`
-takes it back.
+takes it back. With more than one Nest, `thermostat` picks which ones show it
+(all of them when it's left out).
 
 **The doorbell:** someone rings, and the thermostat shows who's there.
 
@@ -166,6 +167,26 @@ automation:
         target:
           entity_id: lock.back_door
 ```
+
+## Weather and temperature
+
+The weather entity you pick (in the panel's **Thermostat** tab, or the
+integration's options) feeds the Nest's own weather screen too: the outside
+temperature and humidity, and the forecast, every 15 minutes. Pick an outside
+thermometer as well to use its temperature instead of the forecast's. This
+replaces the Nest weather blueprint.
+
+**Room thermometer:** the Nest regulates from a Home Assistant sensor instead
+of its own, in °C or °F, and goes back to its own if the readings stop for 30
+minutes. The Nest needs Fledge's external temperature option for this, which
+turns off its Bluetooth, so real Nest Temperature Sensors stop working. Turn it
+on with the Nest's **External temperature** switch, the toggle in the panel, or
+the repair Home Assistant shows when a room thermometer is chosen without it.
+Changing it reboots the Nest, so its heating pauses for about a minute.
+
+**Heating today** and **Hot water today** count the hours the Nest has called
+for each since midnight. They're kept as long-term statistics, so a statistics
+graph card shows them by day, week or month.
 
 ## The Nest's schedules on your dashboards
 

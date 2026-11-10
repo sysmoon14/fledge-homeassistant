@@ -20,19 +20,23 @@
           "entities": "Devices",
           "wake": "When the thermostat wakes",
           "wake_device": "Or open this device",
-          "weather": "Weather for the glance",
+          "weather": "Weather",
           "far": "Someone across the room",
           "near": "Someone comes up to it",
-          "card_idle": "Screen stays on for"
+          "card_idle": "Screen stays on for",
+          "outdoor_temperature": "Outside thermometer",
+          "room_sensor": "Room thermometer"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
           "wake_device": "Wake straight into one of the devices above instead.",
-          "weather": "A weather entity, for the glance.",
+          "weather": "A weather entity: the Nest's own weather (outside temperature, humidity and forecast) and the glance.",
           "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
           "near": "When someone comes close, without touching it.",
-          "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top."
+          "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top.",
+          "outdoor_temperature": "Optional: the outside temperature from this sensor rather than the weather entity.",
+          "room_sensor": "Optional: the Nest regulates from this sensor instead of its own. The Nest needs Fledge's external temperature option for it, which turns off its Bluetooth (real Nest Temperature Sensors stop working). If its reading stops, the Nest goes back to its own sensor."
         }
       }
     },
@@ -51,19 +55,23 @@
           "entities": "Devices",
           "wake": "When the thermostat wakes",
           "wake_device": "Or open this device",
-          "weather": "Weather for the glance",
+          "weather": "Weather",
           "far": "Someone across the room",
           "near": "Someone comes up to it",
-          "card_idle": "Screen stays on for"
+          "card_idle": "Screen stays on for",
+          "outdoor_temperature": "Outside thermometer",
+          "room_sensor": "Room thermometer"
         },
         "data_description": {
           "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
           "wake_device": "Wake straight into one of the devices above instead.",
-          "weather": "A weather entity, for the glance.",
+          "weather": "A weather entity: the Nest's own weather (outside temperature, humidity and forecast) and the glance.",
           "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
           "near": "When someone comes close, without touching it.",
-          "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top."
+          "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top.",
+          "outdoor_temperature": "Optional: the outside temperature from this sensor rather than the weather entity.",
+          "room_sensor": "Optional: the Nest regulates from this sensor instead of its own. The Nest needs Fledge's external temperature option for it, which turns off its Bluetooth (real Nest Temperature Sensors stop working). If its reading stops, the Nest goes back to its own sensor."
         }
       }
     }
@@ -95,6 +103,24 @@
     "thermostat_outdated": {
       "title": "Update the thermostat's Fledge",
       "description": "The Nest thermostat {serial} runs a Fledge build older than this integration needs, so some of its cards may not work. Install its update from the thermostat's update entity (Settings → Updates)."
+    },
+    "room_sensor_unsupported": {
+      "title": "The Nest can't use the room thermometer yet",
+      "description": "The Nest thermostat {serial} is set to regulate from {sensor}, but it runs without Fledge's external temperature option, so it ignores the readings. Update the Nest's Fledge to turn the option on from Home Assistant, or clear Room thermometer in the integration's options."
+    },
+    "room_sensor_switch": {
+      "title": "Turn on the Nest's external temperature option",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Turn on external temperature",
+            "description": "The Nest thermostat {serial} will regulate from your room thermometer. Turning the option on reboots the Nest (its heating pauses for about a minute) and turns off its Bluetooth, so real Nest Temperature Sensors stop working. If the readings stop, the Nest goes back to its own sensor. You can turn it off again with the Nest's External temperature switch."
+          }
+        },
+        "abort": {
+          "no_switch": "The Nest no longer offers the switch: update its Fledge."
+        }
+      }
     }
   },
   "entity": {
@@ -117,6 +143,14 @@
     "button": {
       "wake_screen": {
         "name": "Wake screen"
+      }
+    },
+    "sensor": {
+      "heating_today": {
+        "name": "Heating today"
+      },
+      "hot_water_today": {
+        "name": "Hot water today"
       }
     }
   },
@@ -148,6 +182,10 @@
         "tag": {
           "name": "Tag",
           "description": "Names it, for fledge.dismiss and in its event. Made up if left out."
+        },
+        "thermostat": {
+          "name": "Thermostat",
+          "description": "Which Nests show it; all of them if none is chosen."
         }
       }
     },
@@ -158,6 +196,10 @@
         "tag": {
           "name": "Tag",
           "description": "The tag it was shown with."
+        },
+        "thermostat": {
+          "name": "Thermostat",
+          "description": "Which Nests to dismiss it from; all of them if none is chosen."
         }
       }
     },

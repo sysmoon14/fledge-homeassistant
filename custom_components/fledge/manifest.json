@@ -5,7 +5,8 @@
     "camera",
     "frontend",
     "media_player",
-    "panel_custom"
+    "panel_custom",
+    "weather"
   ],
   "codeowners": [
     "@sysmoon14"
@@ -14,6 +15,7 @@
   "dependencies": [
     "http",
     "mqtt",
+    "repairs",
     "websocket_api"
   ],
   "documentation": "https://github.com/sysmoon14/fledge-homeassistant",
@@ -23,5 +25,5 @@
   "mqtt": [
     "nestlocal/+/availability"
   ],
-  "version": "0.13.0"
+  "version": "0.14.0"
 }

@@ -15,6 +15,12 @@ CONF_WAKE_DEVICE = "wake_device"
 # the weather entity it shows.
 CONF_GLANCE = "glance"
 CONF_WEATHER = "weather"
+# The weather entity also feeds the Nest's own weather screen; an outdoor
+# thermometer, if chosen, gives its temperature instead of the forecast's.
+CONF_OUTDOOR = "outdoor_temperature"
+# A room's thermometer the Nest regulates from (nestlocal's
+# -external-temperature: its stand-in Nest Temperature Sensor).
+CONF_ROOM_SENSOR = "room_sensor"
 # Someone across the room (the Nest's Farsight lights it) and someone close
 # (its approach reading), and how long the cards stay untouched: protocol 6.
 # Without CONF_FAR, the glance switch says (glance, else wake).
@@ -69,10 +75,16 @@ def presence(options) -> tuple[str, str, int]:
 
 
 # The entities on the cards' device.
-PLATFORMS = ["select", "switch", "button"]
+PLATFORMS = ["select", "switch", "button", "sensor"]
 # A notification (fledge.notify), and the event its answer fires.
 ALERT_TOPIC = "{prefix}/{serial}/set/alert"
 EVENT_NOTIFICATION = "fledge_notification"
+# The Nest's weather (retained) and a room's reading (not retained: an old
+# one must not reach a restarted nestlocal as new): nestlocal's commands.rs.
+OUTDOOR_TOPIC = "{prefix}/{serial}/set/outdoor_temperature"
+HUMIDITY_TOPIC = "{prefix}/{serial}/set/outdoor_humidity"
+WEATHER_TOPIC = "{prefix}/{serial}/set/weather"
+ROOM_TOPIC = "{prefix}/{serial}/set/external_temperature"
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 

@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_CARD_IDLE, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+from .const import (CONF_CARD_IDLE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
                     CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
                     NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
@@ -47,6 +47,7 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
         options=[WAKE_CHOOSER, WAKE_AUTO, WAKE_THERMOSTAT], translation_key="wake", mode=selector.SelectSelectorMode.LIST))
     device = selector.EntitySelector(selector.EntitySelectorConfig(domain=DOMAINS))
     far, near, idle = presence(current)
+    thermometer = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class="temperature"))
     choose = lambda key, options: selector.SelectSelector(selector.SelectSelectorConfig(  # noqa: E731
         options=options, translation_key=key, mode=selector.SelectSelectorMode.LIST))
     return vol.Schema({
@@ -59,6 +60,8 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
             min=5, max=600, step=1, unit_of_measurement="s", mode=selector.NumberSelectorMode.BOX)),
         vol.Optional(CONF_WEATHER, description={"suggested_value": current.get(CONF_WEATHER)}):
             selector.EntitySelector(selector.EntitySelectorConfig(domain="weather")),
+        vol.Optional(CONF_OUTDOOR, description={"suggested_value": current.get(CONF_OUTDOOR)}): thermometer,
+        vol.Optional(CONF_ROOM_SENSOR, description={"suggested_value": current.get(CONF_ROOM_SENSOR)}): thermometer,
     })
 
 
@@ -76,8 +79,9 @@ def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None
         options[CONF_GLANCE] = True
     if user_input.get(CONF_CARD_IDLE):
         options[CONF_CARD_IDLE] = max(5, min(600, int(idle)))
-    if user_input.get(CONF_WEATHER):
-        options[CONF_WEATHER] = user_input[CONF_WEATHER]
+    for key in (CONF_WEATHER, CONF_OUTDOOR, CONF_ROOM_SENSOR):
+        if user_input.get(key):
+            options[key] = user_input[key]
     place = user_input.get(CONF_THERMOSTAT)
     if isinstance(place, int) and place > 0:
         options[CONF_THERMOSTAT] = min(place, len(options[CONF_ENTITIES]))

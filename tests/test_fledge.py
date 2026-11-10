@@ -773,3 +773,197 @@ async def test_across_the_room_and_close_up_reach_the_thermostat(hass: HomeAssis
                                    {"entity_id": ids["close_up"], "option": "Nothing"}, blocking=True)
     await hass.async_block_till_done()
     assert "glance" not in json.loads(_published(mqtt_mock)[-1][1])
+
+
+# The weather and a room's temperature, for the Nest itself (feeds.py).
+
+def test_temperatures_reach_the_nest_in_celsius():
+    from custom_components.fledge.feeds import celsius, forecast, outdoor
+    assert celsius("68", "°F") == 20.0 and celsius(21.5, "°C") == 21.5 and celsius("293.15", "K") == 20.0
+    assert celsius("unavailable", "°C") is None and celsius("nan", "°C") is None
+    weather = State("weather.home", "rainy", temperature=50, temperature_unit="°F", humidity=81)
+    assert outdoor(weather, None) == (10.0, 81.0)
+    assert outdoor(weather, State("sensor.garden", "7.25", unit_of_measurement="°C")) == (7.25, 81.0), \
+        "the thermometer's temperature, the forecast's humidity"
+    assert outdoor(weather, State("sensor.garden", "unavailable")) == (None, 81.0), "not the forecast's instead"
+    shown = forecast(weather, State("sun.sun", "above_horizon", next_rising="r", next_setting="s"),
+                     [{"datetime": "h", "temperature": 59}] * 60, [{"datetime": "d", "temperature": 68, "templow": 41}])
+    assert shown["condition"] == "rainy" and (shown["next_rising"], shown["next_setting"]) == ("r", "s")
+    assert len(shown["hourly"]) == 48 and shown["hourly"][0]["temperature"] == 15.0
+    assert shown["daily"] == [{"datetime": "d", "temperature": 20.0, "templow": 5.0}]
+
+
+def _source(hass: HomeAssistant, thermostat: dr.DeviceEntry, domain: str, end: str, object_id: str) -> str:
+    return er.async_get(hass).async_get_or_create(domain, "mqtt", f"nestlocal_{SERIAL.lower()}_{end}",
+                                                  device_id=thermostat.id, suggested_object_id=object_id).entity_id
+
+
+async def test_the_weather_reaches_the_nest_s_own_screen(hass: HomeAssistant, mqtt_mock) -> None:
+    from homeassistant.core import SupportsResponse
+    _thermostat(hass)
+    hass.states.async_set("weather.home", "cloudy", {"temperature": 12.5, "temperature_unit": "°C", "humidity": 70,
+                                                     "supported_features": 3})
+    asked = []
+
+    async def forecasts(call):
+        asked.append(call.data["type"])
+        return {"weather.home": {"forecast": [{"datetime": call.data["type"], "temperature": 11}]}}
+    hass.services.async_register("weather", "get_forecasts", forecasts, supports_response=SupportsResponse.ONLY)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser", "weather": "weather.home"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    sent = lambda end: [(c.args[1], c.args[3]) for c in mqtt_mock.async_publish.call_args_list
+                        if c.args[0] == f"nestlocal/{SERIAL}/set/{end}"]
+    assert sent("outdoor_temperature") == [("12.5", True)] and sent("outdoor_humidity") == [("70.0", True)]
+    assert sorted(asked) == ["daily", "hourly"]
+    weather = json.loads(sent("weather")[-1][0])
+    assert weather["condition"] == "cloudy" and weather["hourly"] == [{"datetime": "hourly", "temperature": 11.0}]
+
+    hass.states.async_set("weather.home", "cloudy", {"temperature": 13, "temperature_unit": "°C", "humidity": 70,
+                                                     "supported_features": 3})
+    await hass.async_block_till_done()
+    assert sent("outdoor_temperature")[-1] == ("13.0", True)
+    assert len(sent("outdoor_humidity")) == 1, "unchanged: not sent again"
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=16))
+    await hass.async_block_till_done()
+    assert len(asked) == 4, "the forecast every quarter of an hour"
+
+
+async def test_a_room_thermometer_reaches_a_nest_that_can_use_it(hass: HomeAssistant, mqtt_mock) -> None:
+    thermostat = _thermostat(hass)
+    hass.states.async_set("sensor.lounge", "70.7", {"unit_of_measurement": "°F", "device_class": "temperature"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser", "room_sensor": "sensor.lounge"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    topic = f"nestlocal/{SERIAL}/set/external_temperature"
+    sent = lambda: [(c.args[1], c.args[3]) for c in mqtt_mock.async_publish.call_args_list if c.args[0] == topic]
+    issues = ir.async_get(hass)
+    assert sent() == [] and issues.async_get_issue(DOMAIN, f"room_sensor_{SERIAL}"), \
+        "a Nest without the option: nothing sent, a repair says why"
+
+    _source(hass, thermostat, "sensor", "temperature_source", "nest_thermostat_temperature_source")
+    hass.states.async_set("sensor.lounge", "71.6", {"unit_of_measurement": "°F", "device_class": "temperature"})
+    await hass.async_block_till_done()
+    assert sent() == [("22.0", False)], "°C, and never retained"
+    assert issues.async_get_issue(DOMAIN, f"room_sensor_{SERIAL}") is None
+    hass.states.async_set("sensor.lounge", "unavailable")
+    await hass.async_block_till_done()
+    assert len(sent()) == 1
+    hass.states.async_set("sensor.lounge", "71.6", {"unit_of_measurement": "°F", "device_class": "temperature"})
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=11))
+    await hass.async_block_till_done()
+    assert sent()[-1] == ("22.0", False) and len(sent()) == 2, "the same reading again, before it times out"
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert issues.async_get_issue(DOMAIN, f"room_sensor_{SERIAL}") is None
+
+
+async def test_heating_and_hot_water_hours_today(hass: HomeAssistant, mqtt_mock, freezer) -> None:
+    freezer.move_to("2026-11-09 10:00:00+00:00")
+    thermostat = _thermostat(hass)
+    heating = _source(hass, thermostat, "binary_sensor", "heating", "nest_thermostat_heating")
+    hot_water = _source(hass, thermostat, "binary_sensor", "hot_water", "nest_thermostat_hot_water")
+    hass.states.async_set(heating, "off")
+    hass.states.async_set(hot_water, "on")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    ids = {key: er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{SERIAL}_{key}")
+           for key in ("heating_today", "hot_water_today")}
+    state = hass.states.get(ids["heating_today"])
+    assert state.state == "0.0" and state.attributes["unit_of_measurement"] == "h"
+    assert state.attributes["state_class"] == "total_increasing" and state.attributes["device_class"] == "duration"
+
+    hass.states.async_set(heating, "on")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(minutes=90))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert float(hass.states.get(ids["heating_today"]).state) == 1.5, "a run going on counts as it goes"
+    hass.states.async_set(heating, "off")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(hours=2))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert float(hass.states.get(ids["heating_today"]).state) == 1.5
+    assert float(hass.states.get(ids["hot_water_today"]).state) == 3.5, "on since it started"
+
+    freezer.move_to(dt_util.start_of_local_day() + timedelta(days=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert float(hass.states.get(ids["heating_today"]).state) == 0
+    freezer.tick(timedelta(minutes=30))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert float(hass.states.get(ids["hot_water_today"]).state) == 0.5, "a new day, from midnight"
+
+
+async def test_a_notification_for_one_nest(hass: HomeAssistant, mqtt_mock) -> None:
+    thermostat = _thermostat(hass)
+    other = "02AA01AB12340001"
+    for serial in (SERIAL, other):
+        entry = MockConfigEntry(domain=DOMAIN, unique_id=serial, data={"serial": serial},
+                                options={"entities": [], "wake": "chooser"})
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    alerts = lambda serial: [c for c in mqtt_mock.async_publish.call_args_list
+                             if c.args[0] == f"nestlocal/{serial}/set/alert"]
+    await hass.services.async_call(DOMAIN, "notify", {"message": "Hi", "thermostat": thermostat.id}, blocking=True)
+    assert (len(alerts(SERIAL)), len(alerts(other))) == (1, 0), "the Nest's own device"
+    cards_device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, other)})
+    await hass.services.async_call(DOMAIN, "dismiss", {"tag": "x", "thermostat": [cards_device.id]}, blocking=True)
+    assert (len(alerts(SERIAL)), len(alerts(other))) == (1, 1), "or its cards' device"
+    await hass.services.async_call(DOMAIN, "notify", {"message": "All"}, blocking=True)
+    assert (len(alerts(SERIAL)), len(alerts(other))) == (2, 2), "none chosen: every Nest"
+
+
+async def test_the_temperatures_are_options(hass: HomeAssistant, mqtt_mock) -> None:
+    from custom_components.fledge.config_flow import options_from
+    options = options_from({"entities": [], "wake": "chooser", "weather": "weather.home",
+                            "outdoor_temperature": "sensor.garden", "room_sensor": "sensor.lounge"})
+    assert (options["weather"], options["outdoor_temperature"], options["room_sensor"]) == \
+        ("weather.home", "sensor.garden", "sensor.lounge")
+    assert "room_sensor" not in options_from({"entities": [], "wake": "chooser", "room_sensor": None})
+
+
+async def test_the_repair_turns_the_nest_s_option_on(hass: HomeAssistant, mqtt_mock) -> None:
+    from custom_components.fledge import repairs
+    thermostat = _thermostat(hass)
+    switch = _source(hass, thermostat, "switch", "external_temperature_option", "nest_thermostat_external_temperature")
+    hass.states.async_set("sensor.lounge", "21", {"unit_of_measurement": "°C", "device_class": "temperature"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser", "room_sensor": "sensor.lounge"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"room_sensor_{SERIAL}")
+    assert issue.is_fixable and issue.translation_key == "room_sensor_switch" and issue.data == {"serial": SERIAL}
+
+    turn_on = async_mock_service(hass, "switch", "turn_on")
+    flow = await repairs.async_create_fix_flow(hass, issue.issue_id, issue.data)
+    flow.hass = hass
+    result = await flow.async_step_init()
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "confirm"
+    assert turn_on == [], "nothing until confirmed"
+    result = await flow.async_step_confirm({})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [c.data["entity_id"] for c in turn_on] == [switch]
+
+
+async def test_an_older_nest_s_repair_only_says_how(hass: HomeAssistant, mqtt_mock) -> None:
+    _thermostat(hass)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser", "room_sensor": "sensor.lounge"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"room_sensor_{SERIAL}")
+    assert not issue.is_fixable and issue.translation_key == "room_sensor_unsupported"

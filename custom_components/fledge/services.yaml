@@ -29,6 +29,14 @@ notify:
       example: "washing"
       selector:
         text:
+    thermostat:
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: fledge
+            - integration: mqtt
+              manufacturer: Google Nest
 
 dismiss:
   fields:
@@ -37,6 +45,14 @@ dismiss:
       example: "washing"
       selector:
         text:
+    thermostat:
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: fledge
+            - integration: mqtt
+              manufacturer: Google Nest
 
 set_schedule:
   fields:

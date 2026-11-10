@@ -631,6 +631,8 @@ class FledgePanel extends HTMLElement {
       near: options.near || "wake",
       card_idle: options.card_idle || 20,
       weather: options.weather || null,
+      outdoor_temperature: options.outdoor_temperature || null,
+      room_sensor: options.room_sensor || null,
       names: { ...(options.names || {}) },
       device_name: t?.name_by_user || "",
     };
@@ -691,7 +693,8 @@ class FledgePanel extends HTMLElement {
         type: "fledge/save", entry_id: t.entry_id, entities, wake: d.wake, thermostat: this._place(),
         wake_device: entities.includes(d.wake_device) ? d.wake_device : null, glance: d.far === "glance",
         far: d.far, near: d.near, card_idle: d.card_idle,
-        weather: d.weather || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
+        weather: d.weather || null, outdoor_temperature: d.outdoor_temperature || null,
+        room_sensor: d.room_sensor || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
       });
       const name = d.device_name.trim();
       if (t.device_id && name !== (t.name_by_user || "")) {
@@ -822,6 +825,7 @@ class FledgePanel extends HTMLElement {
     for (const picker of this.shadowRoot.querySelectorAll("ha-entity-picker[data-pick]")) {
       picker.hass = this._hass;
       picker.includeDomains = [picker.dataset.domain];
+      if (picker.dataset.class) picker.includeDeviceClasses = [picker.dataset.class];
       picker.value = picker.dataset.value || "";
       picker.label = picker.dataset.label;
       picker.disabled = picker.hasAttribute("data-disabled");
@@ -829,11 +833,12 @@ class FledgePanel extends HTMLElement {
   }
 
   // An entity choice: Home Assistant's picker when it's loaded, else a list.
-  _entityField(key, domain, label, value, disabled = false) {
+  _entityField(key, domain, label, value, disabled = false, deviceClass = "") {
     if (this._pickers) {
-      return `<ha-entity-picker data-pick="${key}" data-domain="${domain}" data-label="${esc(label)}" data-value="${esc(value || "")}" ${disabled ? "data-disabled" : ""}></ha-entity-picker>`;
+      return `<ha-entity-picker data-pick="${key}" data-domain="${domain}" data-class="${esc(deviceClass)}" data-label="${esc(label)}" data-value="${esc(value || "")}" ${disabled ? "data-disabled" : ""}></ha-entity-picker>`;
     }
-    const ids = Object.keys(this._hass.states).filter((id) => id.startsWith(`${domain}.`)).sort();
+    const ids = Object.keys(this._hass.states).filter((id) => id.startsWith(`${domain}.`)
+      && (!deviceClass || this._hass.states[id].attributes.device_class === deviceClass)).sort();
     return `<div class="field"><label for="pick-${key}">${esc(label)}</label><select id="pick-${key}" class="pick wide" data-input="pick" data-key="${key}" ${disabled ? "disabled" : ""}>
       <option value="">None</option>${ids.map((id) => `<option value="${esc(id)}" ${value === id ? "selected" : ""}>${esc(this._hass.states[id].attributes.friendly_name || id)}</option>`).join("")}</select></div>`;
   }
@@ -1036,7 +1041,7 @@ class FledgePanel extends HTMLElement {
         <p class="muted small">Close enough to reach it, without touching it.</p>
         ${NEARS.map(([k, label, sub]) => this._presence("near", k, label, sub)).join("")}
         <div class="field narrowfield"><label for="cardidle">Screen stays on for (s)</label><input id="cardidle" type="number" min="5" max="600" value="${esc(d.card_idle)}" data-input="cardidle"></div>
-        ${this._entityField("weather", "weather", "Weather for the glance", d.weather, d.far !== "glance" && d.near !== "glance")}
+        <p class="muted small">The glance's weather is chosen on the Thermostat tab.</p>
         ${keep ? `<div class="kv"><span>Keep screen on<span class="sub">Applies straight away</span></span>${this._switch("keepon", keepOn, "Keep screen on")}</div>` : ""}
       </section>
     </div>`;
@@ -1096,7 +1101,29 @@ class FledgePanel extends HTMLElement {
           <a class="btn ghost" href="/config/integrations/integration/fledge" data-act="nav" data-href="/config/integrations/integration/fledge">Integration</a>
         </div>
       </section>
+      ${this._temperatures()}
     </div>`;
+  }
+
+  // The weather the Nest shows (its own screen and the glance), and a room
+  // thermometer it can regulate from.
+  _temperatures() {
+    const d = this._draft;
+    const can = this._current.room_sensor;
+    const option = this._current.room_sensor_switch;
+    const optionOn = option && this._hass.states[option]?.state === "on";
+    return `<section class="card pad">
+        <h2>Weather and temperature</h2>
+        <p class="muted small">The Nest's own weather screen and the glance show this weather.</p>
+        ${this._entityField("weather", "weather", "Weather", d.weather)}
+        ${this._entityField("outdoor_temperature", "sensor", "Outside thermometer (optional)", d.outdoor_temperature, false, "temperature")}
+        <h2>Room thermometer</h2>
+        <p class="muted small">The Nest regulates from this sensor instead of its own, and goes back to its own if the readings stop.
+        ${can ? "" : " It needs the Nest's external temperature option, which turns off its Bluetooth: real Nest Temperature Sensors stop working."}</p>
+        ${option ? `<div class="kv"><span>External temperature option<span class="sub">${optionOn === can ? "Reboots the Nest when changed" : "Rebooting the Nest into it…"}</span></span>${this._switch("extoption", optionOn, "External temperature option")}</div>` : ""}
+        ${this._entityField("room_sensor", "sensor", "Room thermometer (optional)", d.room_sensor, false, "temperature")}
+        ${d.room_sensor && !can ? `<p class="badtext small">This Nest runs without the external temperature option, so it ignores the readings for now.${option ? "" : " Update its Fledge to turn the option on from here."}</p>` : ""}
+      </section>`;
   }
 
   _saveBar() {
@@ -1189,6 +1216,17 @@ class FledgePanel extends HTMLElement {
       case "menu": this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })); return;
       case "wakenow": this._hass.callService("button", "press", { entity_id: this._current.entities.wake_screen }); return;
       case "keepon": this._hass.callService("switch", "toggle", { entity_id: this._current.entities.keep_screen_on }); return;
+      case "extoption": {
+        const id = this._current.room_sensor_switch;
+        const on = this._hass.states[id]?.state === "on";
+        const ask = on
+          ? "Turn the external temperature option off? The Nest reboots (its heating pauses for about a minute) and goes back to its own sensor and Bluetooth."
+          : "Turn the external temperature option on? The Nest reboots (its heating pauses for about a minute) and its Bluetooth turns off, so real Nest Temperature Sensors stop working.";
+        if (!confirm(ask)) return;
+        this._hass.callService("switch", on ? "turn_off" : "turn_on", { entity_id: id })
+          .then(() => this._flash("The Nest is rebooting into it."), (err) => { this._error = err?.message || String(err); this._render(); });
+        return;
+      }
       case "install": this._hass.callService("update", "install", { entity_id: this._current.update }); return;
       case "check":
         this._hass.callService("button", "press", { entity_id: own(this._current, "button", "check_update") })
@@ -1259,8 +1297,8 @@ class FledgePanel extends HTMLElement {
   }
 
   _choose(key, value) {
-    if (key === "weather") {
-      this._draft.weather = value || null;
+    if (["weather", "outdoor_temperature", "room_sensor"].includes(key)) {
+      this._draft[key] = value || null;
       this._render();
     } else if (key === "camera") {
       this._note.camera = value || "";

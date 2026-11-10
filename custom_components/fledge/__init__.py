@@ -31,6 +31,7 @@ from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from . import art, cards, panel, schedule
+from .feeds import Feeds
 from .config_flow import thermostats
 from .const import (FAR_GLANCE, presence, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
@@ -49,25 +50,35 @@ NOTIFY_SCHEMA = vol.Schema({
     vol.Optional("camera"): cv.entity_domain("camera"),
     vol.Optional("timeout", default=30): vol.All(vol.Coerce(int), vol.Range(min=3, max=3600)),
     vol.Optional("tag"): cv.string,
+    vol.Optional("thermostat"): vol.All(cv.ensure_list, [cv.string]),
 })
-DISMISS_SCHEMA = vol.Schema({vol.Required("tag"): cv.string})
+DISMISS_SCHEMA = vol.Schema({vol.Required("tag"): cv.string,
+                             vol.Optional("thermostat"): vol.All(cv.ensure_list, [cv.string])})
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """fledge.notify and fledge.dismiss: notifications on the thermostats'
     screens. A press or a dismissal fires fledge_notification with the tag."""
 
-    def running() -> list[Thermostat]:
-        return [entry.runtime_data for entry in hass.config_entries.async_loaded_entries(DOMAIN)]
+    def running(call: ServiceCall) -> list[Thermostat]:
+        """The thermostats a call is for: the devices chosen (the Nest's own,
+        or its cards'), else all of them."""
+        everyone = [entry.runtime_data for entry in hass.config_entries.async_loaded_entries(DOMAIN)]
+        chosen = call.data.get("thermostat")
+        if not chosen:
+            return everyone
+        devices = dr.async_get(hass)
+        serials = {d.serial_number for d in (devices.async_get(i) for i in chosen) if d is not None}
+        return [t for t in everyone if t.serial in serials]
 
     async def notify(call: ServiceCall) -> ServiceResponse:
         tag = call.data.get("tag") or uuid.uuid4().hex[:8]
-        for thermostat in running():
+        for thermostat in running(call):
             await thermostat.async_notify(tag, call.data)
         return {"tag": tag}
 
     async def dismiss(call: ServiceCall) -> None:
-        for thermostat in running():
+        for thermostat in running(call):
             await thermostat.async_dismiss(call.data["tag"])
 
     hass.services.async_register(DOMAIN, "notify", notify, schema=NOTIFY_SCHEMA,
@@ -187,6 +198,8 @@ class Thermostat:
         self._unsubscribe: list[Any] = []
         self._tracking: Any = None
         self._publisher = Debouncer(hass, _LOGGER, cooldown=0.2, immediate=True, function=self._publish)
+        # The weather and a room's temperature, for the Nest itself.
+        self.feeds = Feeds(hass, serial, dict(entry.options))
 
     async def async_start(self) -> None:
         if self.entities:
@@ -204,6 +217,7 @@ class Thermostat:
         await self._updated()
         self._link()
         await self._publish()
+        await self.feeds.async_start()
 
     async def _updated(self) -> None:
         """This integration just updated: the thermostat checks for its own
@@ -274,6 +288,7 @@ class Thermostat:
 
     @callback
     def async_stop(self) -> None:
+        self.feeds.async_stop()
         for unsubscribe in self._unsubscribe:
             unsubscribe()
         if self._tracking:
