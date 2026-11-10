@@ -9,8 +9,10 @@ cards.command allows.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from typing import Any
@@ -21,7 +23,7 @@ from homeassistant.components import mqtt
 from homeassistant.components.media_player import DATA_COMPONENT as MEDIA_PLAYERS
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
@@ -33,7 +35,7 @@ from homeassistant.util import dt as dt_util
 from . import art, cards, panel, schedule
 from .feeds import Feeds
 from .config_flow import thermostats
-from .const import (FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (ALARM_RESULT_TOPIC, CONF_ALARMS, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -170,6 +172,11 @@ def _migrate(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options)
 
 
+# How long an alarm has to change state after a command before it's taken
+# that it didn't (Alarmo, given a wrong code, says nothing).
+ALARM_ANSWER = 3
+
+
 class Thermostat:
     """One Nest's cards: kept published, and its commands carried out."""
 
@@ -192,6 +199,8 @@ class Thermostat:
         self.entities: list[str] = list(entry.options.get(CONF_ENTITIES, []))
         self.weather: str | None = entry.options.get(CONF_WEATHER)
         self.serial = serial
+        # Wrong alarm codes from this thermostat, by alarm.
+        self.tries: dict[str, cards.Tries] = {}
         # Each media player's picture as last sent: its entity_picture, or None.
         self.art: dict[str, str | None] = {}
         self.last: str | None = None
@@ -279,7 +288,7 @@ class Thermostat:
         """A repair to make while the thermostat's build is older than this
         integration needs."""
         issue = f"outdated_{self.serial}"
-        if self.protocol is not None and self.protocol >= PROTOCOL:
+        if self.protocol is not None and self.protocol >= needs(self.entities):
             ir.async_delete_issue(self.hass, DOMAIN, issue)
         else:
             ir.async_create_issue(self.hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING,
@@ -315,7 +324,7 @@ class Thermostat:
         night = sun is not None and sun.state == "below_horizon"
         shown = cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
                             options.get(CONF_WAKE_DEVICE), night, options.get(CONF_NAMES),
-                            options.get(CONF_THERMOSTAT, 0))
+                            options.get(CONF_THERMOSTAT, 0), options.get(CONF_ALARMS))
         far, near, idle = presence(options)
         shown["presence"] = {"far": far, "near": near}
         shown["card_idle"] = idle
@@ -415,7 +424,10 @@ class Thermostat:
         allowed = [*self.entities, *self._members()]
         call = cards.command(payload, allowed) if isinstance(payload, dict) else None
         if call is None:
-            _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", message.payload)
+            _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", cards.redacted(payload))
+            return
+        if call.domain == "alarm_control_panel":
+            self.hass.async_create_task(self._alarm(call))
             return
         if call.domain == DOMAIN and call.service == "snapshot":
             self.hass.async_create_task(self._send_still(call.entity_id))
@@ -429,3 +441,87 @@ class Thermostat:
             return
         self.hass.async_create_task(self.hass.services.async_call(
             call.domain, call.service, {"entity_id": call.entity_id, **call.data}, blocking=False))
+
+    async def _alarm(self, call: cards.Call) -> None:
+        """An alarm armed or disarmed from the thermostat, and what came of
+        it said back (<base>/set/alarm_result). Alarmo's own arm service is
+        used where it's Alarmo's (arming anyway, and why it didn't); a code
+        it doesn't take raises nothing, so an alarm whose state hasn't
+        changed soon after didn't take the code. The code is never logged."""
+        entity = call.entity_id
+        tries = self.tries.setdefault(entity, cards.Tries())
+        left = tries.locked(time.monotonic())
+        if left > 0:
+            await self._alarm_result(entity, ok=False, error="locked", locked_for=math.ceil(left))
+            return
+        state = self.hass.states.get(entity)
+        if state is None:
+            await self._alarm_result(entity, ok=False, error="failed")
+            return
+        before = (state.state, state.last_changed)
+        registered = er.async_get(self.hass).async_get(entity)
+        alarmo = registered is not None and registered.platform == "alarmo"
+        changed = asyncio.Event()
+        refused: dict[str, Any] = {}
+
+        @callback
+        def _changed(_event: Event) -> None:
+            changed.set()
+
+        @callback
+        def _refused(event: Event) -> None:
+            if event.data.get("entity_id") == entity:
+                refused.update(event.data)
+                changed.set()
+
+        stop = [async_track_state_change_event(self.hass, [entity], _changed)]
+        if alarmo:
+            stop.append(self.hass.bus.async_listen("alarmo_failed_to_arm", _refused))
+        code = {"code": call.data["code"]} if call.data.get("code") else {}
+        outcome = "ok"
+        try:
+            if alarmo and call.service != "alarm_disarm":
+                mode = call.service.removeprefix("alarm_arm_")
+                force = {"force": True} if call.data.get("force") else {}
+                await self.hass.services.async_call(
+                    "alarmo", "arm", {"entity_id": entity, "mode": "custom" if mode == "custom_bypass" else mode,
+                                      **code, **force}, blocking=True)
+            else:
+                await self.hass.services.async_call(call.domain, call.service, {"entity_id": entity, **code},
+                                                    blocking=True)
+        except ServiceValidationError:
+            outcome = "rejected"
+        except HomeAssistantError:
+            outcome = "failed"
+        if outcome == "ok":
+            try:
+                async with asyncio.timeout(ALARM_ANSWER):
+                    await changed.wait()
+            except TimeoutError:
+                pass
+            now = self.hass.states.get(entity)
+            if refused:
+                outcome = {"invalid_code": "rejected", "open_sensors": "open_sensors"}.get(refused.get("reason"), "failed")
+            elif now is None or (now.state, now.last_changed) == before:
+                outcome = "rejected"
+        for unsubscribe in stop:
+            unsubscribe()
+        _LOGGER.info("Alarm %s: %s from thermostat %s: %s", entity, call.service, self.serial, outcome)
+        if outcome == "ok":
+            tries.passed()
+            await self._alarm_result(entity, ok=True)
+        elif outcome == "rejected":
+            remaining, locked = tries.failed(time.monotonic())
+            if locked:
+                await self._alarm_result(entity, ok=False, error="locked", locked_for=locked)
+            else:
+                await self._alarm_result(entity, ok=False, error="rejected", tries=remaining)
+        elif outcome == "open_sensors":
+            await self._alarm_result(entity, ok=False, error="open_sensors",
+                                     sensors=cards.sensor_names(refused.get("sensors"), self.hass.states.get))
+        else:
+            await self._alarm_result(entity, ok=False, error="failed")
+
+    async def _alarm_result(self, entity: str, **result: Any) -> None:
+        await mqtt.async_publish(self.hass, ALARM_RESULT_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial),
+                                 json.dumps({"alarm": entity, **result}, separators=(",", ":")))

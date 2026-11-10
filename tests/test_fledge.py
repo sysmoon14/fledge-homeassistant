@@ -969,3 +969,135 @@ async def test_an_older_nest_s_repair_only_says_how(hass: HomeAssistant, mqtt_mo
     await hass.async_block_till_done()
     issue = ir.async_get(hass).async_get_issue(DOMAIN, f"room_sensor_{SERIAL}")
     assert not issue.is_fixable and issue.translation_key == "room_sensor_unsupported"
+
+
+def test_any_alarm_is_a_card_and_alarmo_s_says_more():
+    plain = State("alarm_control_panel.house", "armed_away", friendly_name="House", supported_features=1 | 2 | 4,
+                  code_format="number", code_arm_required=False)
+    card = cards.card(plain, alarms={"alarm_control_panel.house": {"names": {"away": " Going out "}, "hidden": ["night"],
+                                                                   "code_length": 4}})
+    assert card == {"kind": "alarm", "id": "alarm_control_panel.house", "name": "House", "icon": "", "state": "armed_away",
+                    "modes": [{"mode": "home", "name": ""}, {"mode": "away", "name": "Going out"}], "code": "number",
+                    "code_length": 4, "delay": None, "sensors": [], "can_force": False}
+    assert cards.card(State("alarm_control_panel.house", "disarmed", supported_features=32 | 16))["modes"] == \
+        [{"mode": "vacation", "name": ""}, {"mode": "custom_bypass", "name": ""}], "in the ring's order"
+    assert cards.card(State("alarm_control_panel.x", "disarmed", code_format="something"))["code"] is None
+    manual = State("alarm_control_panel.x", "disarmed", code_format="number", code_arm_required=False)
+    assert cards.card(manual)["code"] is None, "its code's format, but none needed to arm"
+
+    from datetime import datetime, timezone
+    began = datetime(2026, 11, 10, 21, 0, tzinfo=timezone.utc)
+    door = State("binary_sensor.front_door", "on", friendly_name="Front door")
+    alarmo = State("alarm_control_panel.alarmo", "pending", supported_features=15, code_format="number", arm_mode="armed_away",
+                   next_state="triggered", open_sensors={"binary_sensor.front_door": "on"}, delay=30)
+    alarmo.last_changed = began
+    card = cards.card(alarmo, {"binary_sensor.front_door": door}.get)
+    assert card["delay"] == {"ends": began.timestamp() + 30, "seconds": 30}, "its delay, from when the state began"
+    assert card["sensors"] == ["Front door"] and card["can_force"]
+    disarmed = State("alarm_control_panel.alarmo", "disarmed", supported_features=15, code_format=None, arm_mode=None,
+                     open_sensors=None, delay=None)
+    assert cards.card(disarmed)["code"] is None, "Alarmo asks no code to arm when it needs none"
+
+
+def test_an_alarm_is_armed_and_disarmed_only_as_allowed():
+    alarm = ["alarm_control_panel.house"]
+    command = lambda **p: cards.command({"id": "alarm_control_panel.house", **p}, alarm)
+    assert command(action="arm", mode="away") == cards.Call("alarm_control_panel", "alarm_arm_away",
+                                                            "alarm_control_panel.house", {})
+    assert command(action="arm", mode="home", code="1234", force=True).data == {"code": "1234", "force": True}
+    assert command(action="disarm", code="1234") == cards.Call("alarm_control_panel", "alarm_disarm",
+                                                               "alarm_control_panel.house", {"code": "1234"})
+    assert command(action="arm", mode="party") is None
+    assert command(action="disarm", code=1234) is None and command(action="disarm", code="1" * 40) is None
+    assert cards.command({"id": "alarm_control_panel.other", "action": "disarm"}, alarm) is None
+    assert cards.redacted({"id": "x", "code": "1234"}) == {"id": "x", "code": "…"}
+
+
+def test_three_wrong_codes_lock_it_out_twice_as_long_each_time():
+    tries = cards.Tries()
+    assert [tries.failed(0), tries.failed(1), tries.failed(2)] == [(2, 0), (1, 0), (0, 30)]
+    assert tries.locked(12) == 20
+    assert [tries.failed(40), tries.failed(41), tries.failed(42)] == [(2, 0), (1, 0), (0, 60)]
+    tries.passed()
+    assert [tries.failed(200), tries.failed(201), tries.failed(202)][-1] == (0, 30), "a code taken starts it again"
+
+
+async def test_the_thermostat_arms_and_disarms_an_alarm_and_hears_how_it_went(hass: HomeAssistant, mqtt_mock,
+                                                                              monkeypatch) -> None:
+    import custom_components.fledge as fledge
+    monkeypatch.setattr(fledge, "ALARM_ANSWER", 0.2)
+    assert await async_setup_component(hass, "alarm_control_panel", {"alarm_control_panel": {
+        "platform": "manual", "name": "House", "code": "1234", "code_arm_required": False,
+        "arming_time": 0, "delay_time": 0}})
+    await hass.async_block_till_done()
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["alarm_control_panel.house"], "wake": "chooser",
+                                     "alarms": {"alarm_control_panel.house": {"names": {"away": "Going out"},
+                                                                              "code_length": 4}}})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    card = json.loads(_published(mqtt_mock)[-1][1])["cards"][0]
+    assert (card["kind"], card["state"], card["code"], card["code_length"]) == ("alarm", "disarmed", None, 4)
+    assert {"mode": "away", "name": "Going out"} in card["modes"]
+
+    results = f"nestlocal/{SERIAL}/set/alarm_result"
+    answers = lambda: [json.loads(c.args[1]) for c in mqtt_mock.async_publish.call_args_list if c.args[0] == results]
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "alarm_control_panel.house", "action": "arm", "mode": "away"}))
+    await hass.async_block_till_done()
+    assert hass.states.get("alarm_control_panel.house").state == "armed_away"
+    assert answers()[-1] == {"alarm": "alarm_control_panel.house", "ok": True}
+
+    for _ in range(2):
+        async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "alarm_control_panel.house", "action": "disarm",
+                                                            "code": "9999"}))
+        await hass.async_block_till_done()
+    assert answers()[-2:] == [{"alarm": "alarm_control_panel.house", "ok": False, "error": "rejected", "tries": 2},
+                              {"alarm": "alarm_control_panel.house", "ok": False, "error": "rejected", "tries": 1}]
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "alarm_control_panel.house", "action": "disarm", "code": "9999"}))
+    await hass.async_block_till_done()
+    assert answers()[-1] == {"alarm": "alarm_control_panel.house", "ok": False, "error": "locked", "locked_for": 30}
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "alarm_control_panel.house", "action": "disarm", "code": "1234"}))
+    await hass.async_block_till_done()
+    assert answers()[-1]["error"] == "locked", "locked out: not even the right code"
+    assert hass.states.get("alarm_control_panel.house").state == "armed_away"
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "8")
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"outdated_{SERIAL}") is not None, \
+        "with an alarm among its cards, a Nest older than protocol 9 is out of date"
+
+    entry.runtime_data.tries["alarm_control_panel.house"].until = 0
+    async_fire_mqtt_message(hass, COMMANDS, json.dumps({"id": "alarm_control_panel.house", "action": "disarm", "code": "1234"}))
+    await hass.async_block_till_done()
+    assert answers()[-1] == {"alarm": "alarm_control_panel.house", "ok": True}
+    assert hass.states.get("alarm_control_panel.house").state == "disarmed"
+
+
+
+async def test_the_panel_saves_an_alarm_s_names_and_code_length(hass: HomeAssistant, mqtt_mock, hass_ws_client) -> None:
+    hass.states.async_set("alarm_control_panel.house", "disarmed", {"friendly_name": "House", "supported_features": 7})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["alarm_control_panel.house"], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "fledge/save", "entry_id": entry.entry_id, "wake": "chooser",
+                            "entities": ["alarm_control_panel.house"],
+                            "alarms": {"alarm_control_panel.house": {"names": {"away": "  Going out ", "home": " "},
+                                                                     "hidden": ["night"], "code_length": 4}}})
+    assert (await client.receive_json())["success"]
+    assert entry.options["alarms"] == {"alarm_control_panel.house": {"names": {"away": "Going out"}, "hidden": ["night"],
+                                                                     "code_length": 4}}
+    await hass.async_block_till_done()
+    card = json.loads(_published(mqtt_mock)[-1][1])["cards"][0]
+    assert card["modes"] == [{"mode": "home", "name": ""}, {"mode": "away", "name": "Going out"}]
+
+    await client.send_json({"id": 2, "type": "fledge/save", "entry_id": entry.entry_id, "wake": "chooser",
+                            "entities": ["alarm_control_panel.house"]})
+    assert (await client.receive_json())["success"]
+    assert entry.options["alarms"]["alarm_control_panel.house"]["code_length"] == 4, "an older panel: kept"
+    await client.send_json({"id": 3, "type": "fledge/save", "entry_id": entry.entry_id, "wake": "chooser",
+                            "entities": ["alarm_control_panel.house"],
+                            "alarms": {"alarm_control_panel.house": {"code_length": 2}}})
+    assert not (await client.receive_json())["success"], "a code of two digits isn't one"

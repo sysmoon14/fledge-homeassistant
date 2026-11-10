@@ -35,6 +35,10 @@ CARD_IDLE = 20
 CONF_DIM_OFF = "dim_off"
 # What a card is called on the Nest, where not its friendly name: by entity.
 CONF_NAMES = "names"
+# An alarm's settings, by entity: its modes' names on the Nest ("names", by
+# mode), the modes left off the ring ("hidden"), and how many digits its
+# code has ("code_length"; none: a tick sends it).
+CONF_ALARMS = "alarms"
 # Where the thermostat's own card goes among them: before entities[n] (0, first).
 CONF_THERMOSTAT = "thermostat"
 # Before 0.4.4: rooms' lights, less some, then thermostats and media players.
@@ -54,15 +58,23 @@ SWITCHED = ("light", "switch", "fan", "input_boolean")
 RUN = {"scene": "turn_on", "script": "turn_on", "button": "press", "input_button": "press"}
 # A choice of options, and covers set part open.
 CHOICES = ("select", "input_select")
-DOMAINS = [*SWITCHED, "climate", "media_player", *RUN, "camera", *CHOICES, "cover"]
+DOMAINS = [*SWITCHED, "climate", "media_player", *RUN, "camera", *CHOICES, "cover", "alarm_control_panel"]
 
 # The cards the thermostat shows (retained) and what it asks for.
 CARDS_TOPIC = "{prefix}/{serial}/set/ui"
 COMMAND_TOPIC = "{prefix}/{serial}/ui/command"
 # What of the cards the thermostat's build understands (retained).
 PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
-# What this integration needs of it: nestlocal's ui::PROTOCOL.
+# What this integration needs of it: nestlocal's ui::PROTOCOL; with an
+# alarm among the cards, the build that has them.
 PROTOCOL = 6
+PROTOCOL_ALARM = 9
+
+
+def needs(entities) -> int:
+    """The protocol a thermostat's build needs for these cards."""
+    alarm = any(str(e).startswith("alarm_control_panel.") for e in entities or [])
+    return PROTOCOL_ALARM if alarm else PROTOCOL
 # Asks the thermostat to look for its own update now (its button's command).
 CHECK_TOPIC = "{prefix}/{serial}/set/check_update"
 # Keeps the thermostat's display lit (ON/OFF, retained), and wakes it.
@@ -88,6 +100,9 @@ OUTDOOR_TOPIC = "{prefix}/{serial}/set/outdoor_temperature"
 HUMIDITY_TOPIC = "{prefix}/{serial}/set/outdoor_humidity"
 WEATHER_TOPIC = "{prefix}/{serial}/set/weather"
 ROOM_TOPIC = "{prefix}/{serial}/set/external_temperature"
+# What Home Assistant made of an alarm command from the thermostat (not
+# retained: an old answer must never reach a restarted nestlocal).
+ALARM_RESULT_TOPIC = "{prefix}/{serial}/set/alarm_result"
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 

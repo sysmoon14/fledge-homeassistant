@@ -6,6 +6,8 @@ model.rs); a command is what it sends on <base>/ui/command:
 
     {"id": "light.x", "action": "on" | "off" | "brightness" | "color_temp" | "hue"
                                 | "temperature" | "volume" | "play_pause", "value": <number>}
+    {"id": "alarm_control_panel.x", "action": "arm", "mode": "away", "code": "1234", "force": false}
+    {"id": "alarm_control_panel.x", "action": "disarm", "code": "1234"}
 """
 
 from __future__ import annotations
@@ -134,12 +136,73 @@ def members(state: State | None) -> list[str]:
     return [e for e in found if isinstance(e, str) and e != state.entity_id] if isinstance(found, (list, tuple)) else []
 
 
-def card(state: State, get: Any = lambda _: None) -> dict[str, Any]:
+# An alarm's modes in the ring's order, each by its supported_features bit
+# (AlarmControlPanelEntityFeature).
+ALARM_MODES = (("home", 1), ("away", 2), ("night", 4), ("vacation", 32), ("custom_bypass", 16))
+# The longest name a mode takes on the Nest, and the code lengths it takes.
+MODE_NAME = 24
+CODE_LENGTHS = range(4, 13)
+
+
+def alarmo(state: State) -> bool:
+    """Whether an alarm is Alarmo's, by the attributes only it gives."""
+    return "arm_mode" in state.attributes and "open_sensors" in state.attributes
+
+
+def alarm(state: State, get: Any = lambda _: None, settings: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """An alarm panel's card, from what any alarm in Home Assistant gives:
+    its state, the modes it has (less those `settings` hide, named as they
+    say), and the code it wants for what would come next (code_format, but
+    none to arm where code_arm_required says so). Alarmo's add
+    its delay's end (its `delay` from when the state began), the sensors
+    that set it off, and arming anyway with one open."""
+    attributes = state.attributes
+    settings = settings or {}
+    features = attributes.get("supported_features") or 0
+    hidden = set(settings.get("hidden") or [])
+    names = settings.get("names") or {}
+    modes = [{"mode": mode, "name": str(names.get(mode) or "").strip()[:MODE_NAME]}
+             for mode, bit in ALARM_MODES if features & bit and mode not in hidden]
+    code = attributes.get("code_format")
+    if state.state == "disarmed" and attributes.get("code_arm_required") is False:
+        # Most panels give their code's format whatever the state: arming
+        # wants it only if it says so.
+        code = None
+    length = settings.get("code_length")
+    out: dict[str, Any] = {
+        "kind": "alarm", "id": state.entity_id, "name": _name(state), "icon": attributes.get("icon") or "",
+        "state": state.state, "modes": modes, "code": code if code in ("number", "text") else None,
+        "code_length": length if isinstance(length, int) and length in CODE_LENGTHS else None,
+        "delay": None, "sensors": [], "can_force": alarmo(state),
+    }
+    if not alarmo(state):
+        return out
+    seconds = attributes.get("delay")
+    began = _seconds(getattr(state, "last_changed", None))
+    if state.state in ("arming", "pending") and isinstance(seconds, (int, float)) and seconds > 0 and began:
+        out["delay"] = {"ends": round(began + seconds, 1), "seconds": seconds}
+    if state.state in ("pending", "triggered"):
+        out["sensors"] = sensor_names(attributes.get("open_sensors"), get)
+    return out
+
+
+def sensor_names(sensors: Any, get: Any) -> list[str]:
+    """Sensors (Alarmo's open_sensors, a mapping or a list of entities) by
+    their names in Home Assistant."""
+    ids = list(sensors) if isinstance(sensors, (dict, list, tuple)) else []
+    found = [get(e) for e in ids if isinstance(e, str)]
+    return [_name(s) if s is not None else e for s, e in zip(found, ids)][:4]
+
+
+def card(state: State, get: Any = lambda _: None, alarms: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One device's card: a thermostat's, a media player's, a scene's, a
-    camera's, a select's, a cover's, or one light's (or switch's), which the
-    thermostat dims or switches straight away; a light group's with its own
-    lights, from `get`, to switch each."""
+    camera's, a select's, a cover's, an alarm's (with its settings from
+    `alarms`), or one light's (or switch's), which the thermostat dims or
+    switches straight away; a light group's with its own lights, from
+    `get`, to switch each."""
     domain = _domain(state.entity_id)
+    if domain == "alarm_control_panel":
+        return alarm(state, get, (alarms or {}).get(state.entity_id))
     if domain in CHOICES:
         return {"kind": "options", "id": state.entity_id, "name": _name(state),
                 "icon": state.attributes.get("icon") or "",
@@ -190,7 +253,8 @@ def named(card: dict[str, Any], name: str | None) -> dict[str, Any]:
 
 
 def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
-          night: bool = False, names: Mapping[str, str] | None = None, thermostat: int = 0) -> dict[str, Any]:
+          night: bool = False, names: Mapping[str, str] | None = None, thermostat: int = 0,
+          alarms: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state
     from `get` (None: unknown to Home Assistant, left out), and what the
     thermostat wakes to: `device`'s place among the cards, else "chooser"
@@ -208,7 +272,8 @@ def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str 
     if device in ids:
         woken = ids.index(device)
     names = names or {}
-    out: dict[str, Any] = {"cards": [named(card(state, get), names.get(state.entity_id)) for state in shown], "wake": woken}
+    out: dict[str, Any] = {"cards": [named(card(state, get, alarms), names.get(state.entity_id)) for state in shown],
+                           "wake": woken}
     # Among the cards shown: those Home Assistant doesn't know are left out.
     place = sum(1 for e in entities[:max(thermostat, 0)] if get(e) is not None)
     if place:
@@ -272,9 +337,61 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
         return Call("climate", "set_preset_mode", entity, {"preset_mode": option})
     if domain in CHOICES and what == "select" and named:
         return Call(domain, "select_option", entity, {"option": option})
+    if domain == "alarm_control_panel" and what in ("arm", "disarm"):
+        code = payload.get("code")
+        if code is not None and not (isinstance(code, str) and 0 < len(code) <= 32):
+            return None
+        data: dict[str, Any] = {"code": code} if code else {}
+        if what == "disarm":
+            return Call(domain, "alarm_disarm", entity, data)
+        mode = payload.get("mode")
+        if mode not in [m for m, _ in ALARM_MODES]:
+            return None
+        if payload.get("force") is True:
+            data["force"] = True
+        return Call(domain, f"alarm_arm_{mode}", entity, data)
     if domain == "cover":
         if what == "position" and 0 <= value <= 100:
             return Call("cover", "set_cover_position", entity, {"position": round(value)})
         if what in ("open", "close"):
             return Call("cover", f"{what}_cover", entity, {})
     return None
+
+
+def redacted(payload: Any) -> Any:
+    """A command as the log may show it: an alarm code hidden."""
+    if isinstance(payload, dict) and "code" in payload:
+        return {**payload, "code": "…"}
+    return payload
+
+
+class Tries:
+    """Wrong alarm codes from one thermostat, for one alarm: three, then
+    the code is locked out for 30 s, twice as long each time after (to 15
+    minutes); a code taken starts it again. Times are monotonic seconds."""
+
+    FIRST = 30
+    LONGEST = 900
+
+    def __init__(self) -> None:
+        self.wrong = 0
+        self.until = 0.0
+        self.lock = self.FIRST
+
+    def locked(self, now: float) -> float:
+        """Seconds the code is still locked out for."""
+        return max(0.0, self.until - now)
+
+    def failed(self, now: float) -> tuple[int, int]:
+        """A wrong code: the tries left, and the seconds now locked out for."""
+        self.wrong += 1
+        if self.wrong < 3:
+            return 3 - self.wrong, 0
+        self.wrong = 0
+        self.until = now + self.lock
+        locked, self.lock = self.lock, min(self.lock * 2, self.LONGEST)
+        return 0, locked
+
+    def passed(self) -> None:
+        self.wrong = 0
+        self.lock = self.FIRST

@@ -8,11 +8,12 @@ const ICONS = {
   climate: "mdi:thermostat", media_player: "mdi:speaker", scene: "mdi:palette", script: "mdi:script-text-play",
   button: "mdi:gesture-tap-button", input_button: "mdi:gesture-tap-button", camera: "mdi:cctv",
   select: "mdi:format-list-bulleted", input_select: "mdi:format-list-bulleted", cover: "mdi:blinds",
+  alarm_control_panel: "mdi:shield-home",
 };
 const KINDS = {
   light: "Light", switch: "Switch", fan: "Fan", input_boolean: "Toggle", climate: "Thermostat", media_player: "Speaker",
   scene: "Scene", script: "Script", button: "Button", input_button: "Button", camera: "Camera", select: "Options",
-  input_select: "Options", cover: "Cover",
+  input_select: "Options", cover: "Cover", alarm_control_panel: "Alarm",
 };
 // What the ring does on each kind of card.
 const RING = {
@@ -24,7 +25,14 @@ const RING = {
   camera: [["Press", "Full screen"], ["Full screen", "A new picture every 3 s"]],
   select: [["Turn", "Pick an option"], ["Press", "Choose it"]], input_select: [["Turn", "Pick an option"], ["Press", "Choose it"]],
   cover: [["Turn", "Position"], ["Press", "Open / close"]],
+  alarm_control_panel: [["Press", "Arm to a mode, or disarm"], ["Code", "Turn to each digit, press to enter it, hold to rub out"],
+    ["Entry delay", "Takes the screen, straight to the code"]],
 };
+// An alarm's modes, in the ring's order, with Home Assistant's names (cards.py ALARM_MODES).
+const ALARM_MODES = [["home", "Home"], ["away", "Away"], ["night", "Night"], ["vacation", "Vacation"], ["custom_bypass", "Custom"]];
+const ALARM_ICONS = { home: "mdi:shield-home", night: "mdi:shield-moon", vacation: "mdi:airplane", custom_bypass: "mdi:shield-star" };
+const ALARM_ARMED = [154, 134, 255];
+const ALARM_RED = [255, 59, 59];
 const THERMOSTAT_RING = [["Turn", "Target temperature"], ["Press", "Its dial; press again for eco, off and hot water"]];
 const WAKES = [
   ["auto", "Automatic", "The speaker that's playing, else after sunset a light that's on, else the chooser"],
@@ -456,6 +464,40 @@ const FACES = {
     f.line(366, card.positionable ? "How open · press for more" : "Press to open or close", N.GREY);
     if (card.positionable) f.big(value, false, "%");
   },
+  // screens.rs alarm_screen, as its card shows it among the others.
+  alarm(f, card) {
+    const name = card.name || "Alarm";
+    const modeName = (mode) => card.modes.find((m) => m.mode === mode)?.name || ALARM_MODES.find(([m]) => m === mode)?.[1] || mode;
+    if (card.state === "arming" || card.state === "pending") {
+      const arming = card.state === "arming";
+      f.face(f.fledge ? N.AMBER : N.BLACK);
+      f.ring(() => ({ c: N.AMBER, a: 0.6, shape: "short" }));
+      f.dialWords(159, arming ? "Arming" : "Entry delay", N.AMBER, arming ? "mdi:home-export-outline" : "mdi:door-open");
+      f.icon("mdi:shield-lock", 240, 246, 96, N.WHITE);
+      f.line(346, arming ? "Press to cancel" : card.code === "number" ? "Press to enter the code" : "Press to disarm", N.WHITE);
+      return;
+    }
+    if (card.state === "triggered") {
+      f.face(ALARM_RED);
+      f.ring(() => ({ c: f.fledge ? ALARM_RED : N.WHITE, a: 0.9, shape: "short" }));
+      f.icon("mdi:alarm-light", 240, 160, 96, N.WHITE);
+      f.text(240, 270, "Alarm", 46, { weight: 500, kind: "medium" });
+      if (card.sensors?.[0]) f.line(310, card.sensors[0], N.WHITE);
+      f.line(352, "Press to disarm", N.WHITE);
+      return;
+    }
+    const armed = card.state.startsWith("armed_") ? card.state.slice(6) : null;
+    f.face(armed && f.fledge ? ALARM_ARMED : N.BLACK);
+    f.ring(() => (armed ? { c: ALARM_ARMED, a: 0.5, shape: "short" } : { c: N.DIM, shape: "short" }));
+    const [icon, accent, status, hint] = armed
+      ? [ALARM_ICONS[armed] || "mdi:shield-lock", ALARM_ARMED, `Armed · ${modeName(armed)}`, "Press to disarm"]
+      : card.state === "disarmed" ? ["mdi:shield-lock-open-outline", N.ECO, "Disarmed", card.modes.length ? "Press to arm" : ""]
+      : ["mdi:shield-lock-open-outline", N.DIM, card.state === "disarming" ? "Disarming…" : "Unavailable", ""];
+    f.icon(icon, 240, 172, 100, armed ? ALARM_ARMED : N.WHITE);
+    f.text(240, 284, name, 40, { max: 330 });
+    f.text(240, 324, status, 21, { weight: 500, c: accent, max: 320 });
+    f.line(360, hint, N.GREY);
+  },
   // This thermostat's own card (screens.rs nest_card).
   nest(f, nest) {
     const card = nest.card;
@@ -635,6 +677,7 @@ class FledgePanel extends HTMLElement {
       outdoor_temperature: options.outdoor_temperature || null,
       room_sensor: options.room_sensor || null,
       names: { ...(options.names || {}) },
+      alarms: JSON.parse(JSON.stringify(options.alarms || {})),
       device_name: t?.name_by_user || "",
     };
     this._saved = this._fingerprint(this._draft);
@@ -653,7 +696,8 @@ class FledgePanel extends HTMLElement {
   _fingerprint(draft) {
     const entities = this._entities(draft);
     const names = Object.fromEntries(Object.entries(draft.names).filter(([k, v]) => v.trim() && entities.includes(k)).sort());
-    return JSON.stringify({ ...draft, device_name: draft.device_name.trim(), names,
+    const alarms = Object.fromEntries(Object.entries(draft.alarms || {}).filter(([k]) => entities.includes(k)).sort());
+    return JSON.stringify({ ...draft, device_name: draft.device_name.trim(), names, alarms,
       wake_device: entities.includes(draft.wake_device) ? draft.wake_device : null });
   }
 
@@ -696,6 +740,10 @@ class FledgePanel extends HTMLElement {
         far: d.far, near: d.near, card_idle: d.card_idle, dim_off: d.dim_off,
         weather: d.weather || null, outdoor_temperature: d.outdoor_temperature || null,
         room_sensor: d.room_sensor || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
+        alarms: Object.fromEntries(Object.entries(d.alarms).filter(([k]) => entities.includes(k)).map(([k, v]) => [k, {
+          names: Object.fromEntries(Object.entries(v.names || {}).filter(([, n]) => n.trim())),
+          hidden: v.hidden || [], code_length: v.code_length || null,
+        }])),
       });
       const name = d.device_name.trim();
       if (t.device_id && name !== (t.name_by_user || "")) {
@@ -770,8 +818,15 @@ class FledgePanel extends HTMLElement {
   }
 
   _card(id) {
-    const card = this._preview.cards[id];
+    let card = this._preview.cards[id];
     if (!card) return null;
+    if (card.kind === "alarm") {
+      // As the integration gives it (cards.alarm): modes left off, named.
+      const settings = this._draft.alarms[id] || {};
+      const modes = card.modes.filter((m) => !(settings.hidden || []).includes(m.mode))
+        .map((m) => ({ ...m, name: (settings.names || {})[m.mode]?.trim() || "" }));
+      card = { ...card, modes, code_length: settings.code_length || null };
+    }
     // As the integration names it for the Nest (cards.named).
     const name = this._draft.names[id]?.trim();
     if (!name) return card;
@@ -987,6 +1042,7 @@ class FledgePanel extends HTMLElement {
         <input id="cardname" type="text" maxlength="40" placeholder="${esc(friendly)}" value="${esc(this._draft.names[id] || "")}" data-input="name"></div>
       <div><div class="muted small">On the ring</div>
         ${(RING[domain] || []).map(([k, v]) => `<div class="kv"><span class="muted">${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>
+      ${domain === "alarm_control_panel" ? this._alarmSettings(id) : ""}
       <div class="kv"><span>Wake straight to this card</span>${this._switch("wakehere", wakes, "Wake straight to this card")}</div>
       <div class="actions">${this._moves()}
         <button class="btn ghost" data-act="more" data-id="${esc(id)}">Open</button>
@@ -994,6 +1050,85 @@ class FledgePanel extends HTMLElement {
         <button class="btn text bad" data-act="remove">Remove</button>
       </div>
     </section>`;
+  }
+
+  // An alarm's settings: its modes on the ring, each named as on the Nest,
+  // and how long its code is. Which modes it has, and when it wants a code,
+  // are the alarm's.
+  _alarmSettings(id) {
+    const state = this._hass.states[id];
+    const a = state?.attributes || {};
+    const settings = this._draft.alarms[id] || {};
+    const hidden = settings.hidden || [];
+    const has = ALARM_MODES.filter(([mode]) => this._preview.cards[id]?.modes?.some((m) => m.mode === mode));
+    const missing = ALARM_MODES.filter(([mode]) => !has.some(([m]) => m === mode)).map(([, name]) => name);
+    const alarmo = "arm_mode" in a && "open_sensors" in a;
+    const rows = has.map(([mode, name]) => {
+      const shown = !hidden.includes(mode);
+      return `<div class="moderow ${shown ? "" : "off"}">
+        ${this._switch("alarmshow", shown, `Show ${name}`).replace("data-act=", `data-mode="${mode}" data-act=`)}
+        <span class="muted small tag">${esc(name)}</span>
+        <input id="alarmname-${mode}" type="text" maxlength="24" placeholder="${esc(name)}" aria-label="Name for ${esc(name)} on the Nest"
+          value="${esc((settings.names || {})[mode] || "")}" data-input="alarmname" data-mode="${mode}"></div>`;
+    }).join("");
+    const lengths = [["", "Any length: a ✓ after 0 sends it"], ...[4, 5, 6, 7, 8].map((n) => [String(n), `${n} digits: the last sends it`])];
+    return `<div class="group">
+        <div class="muted small">Modes on the ring</div>
+        <p class="muted small">After Back, in this order. A name shows on the ring and as “Armed · name” on the card; blank keeps Home Assistant's.</p>
+        ${rows || `<p class="muted small">This alarm has no modes to arm to.</p>`}
+        ${missing.length ? `<p class="muted small">${esc(missing.join(", "))}: not offered by this alarm.</p>` : ""}
+        ${alarmo ? `<div><button class="btn ghost" data-act="alarmcopy">Copy names from its Alarmo card</button></div>` : ""}
+      </div>
+      <div class="group">
+        <div class="muted small">Code</div>
+        <div class="field"><label for="alarmlength">How long is the code?</label>
+          <select id="alarmlength" class="pick wide" data-input="alarmlength">${lengths.map(([v, l]) =>
+            `<option value="${v}" ${String(settings.code_length || "") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
+        <p class="muted small">The Nest asks for a code whenever the alarm wants one, and it checks it; Fledge never keeps it. Three wrong codes lock the code pad for 30 s, longer each time.</p>
+        ${a.code_format === "text" ? `<div class="banner warn inline">This alarm's code has letters, which the ring can't enter: disarm it from Home Assistant.</div>` : ""}
+      </div>
+      <div class="banner ${alarmo ? "ok" : "warn"} inline">${alarmo
+        ? "Alarmo: countdowns in seconds, the sensor that set it off, and “Arm anyway” with a door open."
+        : "This alarm doesn't say how long its delays are, so the ring shows time running without the seconds."}</div>`;
+  }
+
+  // An Alarmo card for this alarm on a dashboard: its buttons' labels and
+  // hidden modes (its `states` option) as the Nest's.
+  async _copyAlarmo(id) {
+    const found = [];
+    const look = (node) => {
+      if (Array.isArray(node)) node.forEach(look);
+      else if (node && typeof node === "object") {
+        if (node.type === "custom:alarmo-card" && node.entity === id) found.push(node);
+        Object.values(node).forEach(look);
+      }
+    };
+    try {
+      const dashboards = await this._hass.callWS({ type: "lovelace/dashboards/list" });
+      for (const url of [null, ...dashboards.filter((d) => d.mode === "storage").map((d) => d.url_path)]) {
+        try { look(await this._hass.callWS({ type: "lovelace/config", url_path: url })); } catch (_) { /* not one with cards */ }
+        if (found.length) break;
+      }
+    } catch (err) {
+      this._error = err?.message || String(err);
+      this._render();
+      return;
+    }
+    const states = found[0]?.states;
+    if (!states) {
+      this._flash("No Alarmo card for this alarm on a dashboard.");
+      return;
+    }
+    const settings = (this._draft.alarms[id] ||= {});
+    settings.names = { ...(settings.names || {}) };
+    settings.hidden = [];
+    for (const [mode] of ALARM_MODES) {
+      const own = states[`armed_${mode}`];
+      if (own?.button_label) settings.names[mode] = String(own.button_label).slice(0, 24);
+      if (own?.hide) settings.hidden.push(mode);
+    }
+    this._flash("Copied its Alarmo card's names.");
+    this._render();
   }
 
   // The thermostat's name in Home Assistant (its device's), blank for its own.
@@ -1218,6 +1353,16 @@ class FledgePanel extends HTMLElement {
       case "menu": this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })); return;
       case "wakenow": this._hass.callService("button", "press", { entity_id: this._current.entities.wake_screen }); return;
       case "dimoff": this._draft.dim_off = !this._draft.dim_off; this._render(); return;
+      case "alarmshow": {
+        const id = d.order[this._sel];
+        const settings = (d.alarms[id] ||= {});
+        const hidden = new Set(settings.hidden || []);
+        if (hidden.has(el.dataset.mode)) hidden.delete(el.dataset.mode);
+        else hidden.add(el.dataset.mode);
+        settings.hidden = ALARM_MODES.map(([m]) => m).filter((m) => hidden.has(m));
+        break;
+      }
+      case "alarmcopy": this._copyAlarmo(d.order[this._sel]); return;
       case "keepon": this._hass.callService("switch", "toggle", { entity_id: this._current.entities.keep_screen_on }); return;
       case "extoption": {
         const id = this._current.room_sensor_switch;
@@ -1249,6 +1394,14 @@ class FledgePanel extends HTMLElement {
     const d = this._draft;
     if (what === "name") {
       d.names[d.order[this._sel]] = el.value;
+      this._render();
+    } else if (what === "alarmname") {
+      const settings = (d.alarms[d.order[this._sel]] ||= {});
+      settings.names = { ...(settings.names || {}), [el.dataset.mode]: el.value };
+      this._render();
+    } else if (what === "alarmlength" && e.type === "change") {
+      const settings = (d.alarms[d.order[this._sel]] ||= {});
+      settings.code_length = Number(el.value) || null;
       this._render();
     } else if (what === "devicename") {
       d.device_name = el.value;
@@ -1511,6 +1664,10 @@ input:focus,.pick:focus{outline:none;border-bottom:2px solid var(--fl-primary)}
 .opt .name{white-space:normal}
 .opt .sub{white-space:normal;font-size:13px}
 .split{display:flex;gap:12px;flex-wrap:wrap}
+.group{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--fl-line);padding-top:12px}
+.moderow{display:grid;grid-template-columns:auto 76px minmax(0,1fr);gap:12px;align-items:center}
+.moderow.off input{opacity:.45}
+.moderow input{min-width:0}
 .split>.field{flex:1 1 200px}
 .split>.narrowfield{flex:0 0 120px}
 pre{margin:0;background:var(--code-editor-background-color,rgba(127,127,127,.1));border:1px solid var(--fl-line);border-radius:8px;padding:12px;overflow-x:auto}

@@ -22,8 +22,8 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from . import cards
 from .config_flow import options_from, thermostats
 from .feeds import option_switch, regulates_from_a_sensor
-from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
-                    DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_FAR, CONF_NEAR,
+from .const import (CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+                    DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
 FRONTEND = Path(__file__).parent / "frontend"
@@ -36,6 +36,25 @@ CARDS_JS = "fledge-schedule-card.js"
 _CARDS = f"{DOMAIN}_cards"
 # Longest name a card takes on the Nest.
 NAME_LENGTH = 40
+# An alarm's settings as the panel sends them.
+ALARM_SETTINGS = vol.Schema({
+    vol.Optional("names", default={}): {vol.In([m for m, _ in cards.ALARM_MODES]): str},
+    vol.Optional("hidden", default=[]): [vol.In([m for m, _ in cards.ALARM_MODES])],
+    vol.Optional("code_length"): vol.Any(None, vol.All(int, vol.Range(min=4, max=12))),
+})
+
+
+def alarm_settings(alarms: dict[str, Any]) -> dict[str, Any]:
+    """Alarms' settings as kept: names trimmed, only what isn't the default."""
+    kept = {}
+    for entity, settings in alarms.items():
+        names = {m: n.strip()[:cards.MODE_NAME] for m, n in settings.get("names", {}).items() if n.strip()}
+        one = {"names": names, "hidden": sorted(set(settings.get("hidden", []))),
+               "code_length": settings.get("code_length")}
+        one = {k: v for k, v in one.items() if v}
+        if one:
+            kept[entity] = one
+    return kept
 
 
 @callback
@@ -110,7 +129,7 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         # The switch that turns that option on (and reboots the Nest), on a
         # build that has it.
         "room_sensor_switch": option_switch(hass, serial),
-        "needs": PROTOCOL,
+        "needs": needs(entry.options.get(CONF_ENTITIES)),
         "version": running.version if running else None,
     }
 
@@ -131,6 +150,7 @@ def ws_thermostats(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
     vol.Required("entities"): [cv.entity_id],
     vol.Optional("names", default={}): {cv.entity_id: str},
     vol.Optional("climate"): vol.Any(None, cv.entity_id),
+    vol.Optional(CONF_ALARMS, default={}): {cv.entity_id: dict},
 })
 @websocket_api.require_admin
 @callback
@@ -143,7 +163,7 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     for entity_id in msg["entities"]:
         state = get(entity_id)
         if state is not None:
-            shown[entity_id] = cards.named(cards.card(state, get), names.get(entity_id))
+            shown[entity_id] = cards.named(cards.card(state, get, msg[CONF_ALARMS]), names.get(entity_id))
     climate = get(msg["climate"]) if msg.get("climate") else None
     connection.send_result(msg["id"], {
         "cards": shown,
@@ -167,6 +187,8 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Optional(CONF_ROOM_SENSOR): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_NAMES, default={}): {cv.entity_id: str},
     vol.Optional(CONF_THERMOSTAT, default=0): vol.All(int, vol.Range(min=0)),
+    # An older panel doesn't send it: kept.
+    vol.Optional(CONF_ALARMS): {cv.entity_id: ALARM_SETTINGS},
 })
 @websocket_api.require_admin
 @callback
@@ -208,6 +230,7 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_OUTDOOR: msg[CONF_OUTDOOR] if CONF_OUTDOOR in msg else entry.options.get(CONF_OUTDOOR),
         CONF_ROOM_SENSOR: msg[CONF_ROOM_SENSOR] if CONF_ROOM_SENSOR in msg else entry.options.get(CONF_ROOM_SENSOR),
         CONF_THERMOSTAT: msg[CONF_THERMOSTAT],
-    }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()})
+    }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()},
+        alarm_settings(msg[CONF_ALARMS]) if CONF_ALARMS in msg else entry.options.get(CONF_ALARMS))
     hass.config_entries.async_update_entry(entry, options=options)
     connection.send_result(msg["id"], {"options": options})

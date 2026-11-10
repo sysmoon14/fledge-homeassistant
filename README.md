@@ -32,7 +32,19 @@ thermostat itself, each card's name above it. Turn to browse, press to open:
 | **Blind, cover** | how open | the position | open / close | open, close |
 | **Scene, script, button** | runs it | | | |
 | **Camera** | a fresh picture | | | its latest still fills the card |
+| **Alarm** | arms (its modes), cancels, or disarms | the mode, or each digit of the code | | its modes, named as you like; the code entered on the ring |
 | **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
+
+An alarm works with any alarm panel in Home Assistant. Its code is entered
+with the ring: the digits sit round it, turn to each and press, hold to rub one
+out. When the entry delay starts, the thermostat lights straight into the code
+pad, the ring counting down; going off, it shows red until disarmed. With
+[Alarmo](https://github.com/nielsfaber/alarmo) the countdown is in seconds, the
+screen names the sensor that set it off, and a door left open can be armed
+past. Three wrong codes lock the pad for 30 seconds, longer each time; the code
+is never stored. In Fledge's panel, name each mode for the Nest (or copy the
+names from an Alarmo card) and say how long the code is, so the last digit
+sends it. Alarm cards need the thermostat on Fledge's protocol 9.
 
 What you open stays open until you go back (its menu's Back, or a long press
 where that doesn't switch it); left alone, the screen times out, and the next
