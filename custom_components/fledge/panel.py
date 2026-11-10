@@ -23,7 +23,7 @@ from . import cards
 from .config_flow import options_from, thermostats
 from .feeds import option_switch, regulates_from_a_sensor
 from .const import (CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
-                    DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_FAR, CONF_NEAR,
+                    DOMAINS, PROTOCOL, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
 FRONTEND = Path(__file__).parent / "frontend"
@@ -161,6 +161,7 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Optional(CONF_FAR): vol.In([FAR_GLANCE, FAR_WAKE, FAR_DARK]),
     vol.Optional(CONF_NEAR): vol.In([NEAR_WAKE, NEAR_GLANCE, NEAR_NONE]),
     vol.Optional(CONF_CARD_IDLE): vol.All(int, vol.Range(min=5, max=600)),
+    vol.Optional(CONF_DIM_OFF): bool,
     vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_OUTDOOR): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_ROOM_SENSOR): vol.Any(None, cv.entity_id),
@@ -200,6 +201,8 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
                                         FAR_DARK if presence(entry.options)[0] == FAR_DARK else FAR_WAKE),
         CONF_NEAR: msg.get(CONF_NEAR) or presence(entry.options)[1],
         CONF_CARD_IDLE: msg.get(CONF_CARD_IDLE) or entry.options.get(CONF_CARD_IDLE),
+        # An older panel doesn't send it: kept.
+        CONF_DIM_OFF: msg[CONF_DIM_OFF] if CONF_DIM_OFF in msg else entry.options.get(CONF_DIM_OFF, True),
         CONF_WEATHER: msg.get(CONF_WEATHER),
         # An older panel doesn't send these: kept.
         CONF_OUTDOOR: msg[CONF_OUTDOOR] if CONF_OUTDOOR in msg else entry.options.get(CONF_OUTDOOR),

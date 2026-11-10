@@ -630,6 +630,7 @@ class FledgePanel extends HTMLElement {
       far: options.far || (options.glance ? "glance" : "wake"),
       near: options.near || "wake",
       card_idle: options.card_idle || 20,
+      dim_off: options.dim_off !== false,
       weather: options.weather || null,
       outdoor_temperature: options.outdoor_temperature || null,
       room_sensor: options.room_sensor || null,
@@ -692,7 +693,7 @@ class FledgePanel extends HTMLElement {
       await this._hass.callWS({
         type: "fledge/save", entry_id: t.entry_id, entities, wake: d.wake, thermostat: this._place(),
         wake_device: entities.includes(d.wake_device) ? d.wake_device : null, glance: d.far === "glance",
-        far: d.far, near: d.near, card_idle: d.card_idle,
+        far: d.far, near: d.near, card_idle: d.card_idle, dim_off: d.dim_off,
         weather: d.weather || null, outdoor_temperature: d.outdoor_temperature || null,
         room_sensor: d.room_sensor || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
       });
@@ -1041,6 +1042,7 @@ class FledgePanel extends HTMLElement {
         <p class="muted small">Close enough to reach it, without touching it.</p>
         ${NEARS.map(([k, label, sub]) => this._presence("near", k, label, sub)).join("")}
         <div class="field narrowfield"><label for="cardidle">Screen stays on for (s)</label><input id="cardidle" type="number" min="5" max="600" value="${esc(d.card_idle)}" data-input="cardidle"></div>
+        <div class="kv"><span>Turning a light down past 1% turns it off<span class="sub">The ring holds at 1% for a moment first. A switch turns off to the left and on to the right.</span></span>${this._switch("dimoff", d.dim_off, "Turning a light down past 1% turns it off")}</div>
         <p class="muted small">The glance's weather is chosen on the Thermostat tab.</p>
         ${keep ? `<div class="kv"><span>Keep screen on<span class="sub">Applies straight away</span></span>${this._switch("keepon", keepOn, "Keep screen on")}</div>` : ""}
       </section>
@@ -1215,6 +1217,7 @@ class FledgePanel extends HTMLElement {
         return;
       case "menu": this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })); return;
       case "wakenow": this._hass.callService("button", "press", { entity_id: this._current.entities.wake_screen }); return;
+      case "dimoff": this._draft.dim_off = !this._draft.dim_off; this._render(); return;
       case "keepon": this._hass.callService("switch", "toggle", { entity_id: this._current.entities.keep_screen_on }); return;
       case "extoption": {
         const id = this._current.room_sensor_switch;

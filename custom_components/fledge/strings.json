@@ -24,6 +24,7 @@
           "far": "Someone across the room",
           "near": "Someone comes up to it",
           "card_idle": "Screen stays on for",
+          "dim_off": "Turning a light down past 1% turns it off",
           "outdoor_temperature": "Outside thermometer",
           "room_sensor": "Room thermometer"
         },
@@ -35,6 +36,7 @@
           "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
           "near": "When someone comes close, without touching it.",
           "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top.",
+          "dim_off": "Turn a light's ring all the way left to switch it off: it holds at 1% for a moment, so a quick spin only dims it. A light that only switches turns off to the left and on to the right.",
           "outdoor_temperature": "Optional: the outside temperature from this sensor rather than the weather entity.",
           "room_sensor": "Optional: the Nest regulates from this sensor instead of its own. The Nest needs Fledge's external temperature option for it, which turns off its Bluetooth (real Nest Temperature Sensors stop working). If its reading stops, the Nest goes back to its own sensor."
         }
@@ -59,6 +61,7 @@
           "far": "Someone across the room",
           "near": "Someone comes up to it",
           "card_idle": "Screen stays on for",
+          "dim_off": "Turning a light down past 1% turns it off",
           "outdoor_temperature": "Outside thermometer",
           "room_sensor": "Room thermometer"
         },
@@ -70,6 +73,7 @@
           "far": "When the Nest sees someone across the room (its Farsight), it lights up. Keep the Nest's Farsight on: it's how the thermostat sees across the room.",
           "near": "When someone comes close, without touching it.",
           "card_idle": "How long the screen stays on whatever you opened (the cards, or a device on them) with nothing touched and nobody close. Then it times out to the glance (if someone is still about) or dark, and the next wake starts again from the top.",
+          "dim_off": "Turn a light's ring all the way left to switch it off: it holds at 1% for a moment, so a quick spin only dims it. A light that only switches turns off to the left and on to the right.",
           "outdoor_temperature": "Optional: the outside temperature from this sensor rather than the weather entity.",
           "room_sensor": "Optional: the Nest regulates from this sensor instead of its own. The Nest needs Fledge's external temperature option for it, which turns off its Bluetooth (real Nest Temperature Sensors stop working). If its reading stops, the Nest goes back to its own sensor."
         }

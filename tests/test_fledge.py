@@ -225,11 +225,12 @@ async def test_choosing_the_thermostat_and_its_cards(hass: HomeAssistant, mqtt_m
     assert result["step_id"] == "init", "one page"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"entities": ["climate.utility", "light.lamp"], "wake": "chooser",
-                            "wake_device": "light.lamp", "far": "glance", "near": "none", "card_idle": 45})
+                            "wake_device": "light.lamp", "far": "glance", "near": "none", "card_idle": 45,
+                            "dim_off": False})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options == {"entities": ["climate.utility", "light.lamp"], "wake": "chooser",
                              "wake_device": "light.lamp", "far": "glance", "near": "none", "glance": True,
-                             "card_idle": 45}
+                             "card_idle": 45, "dim_off": False}
 
 
 async def test_set_up_by_hand_while_discovered(hass: HomeAssistant, mqtt_mock) -> None:
@@ -753,6 +754,7 @@ async def test_across_the_room_and_close_up_reach_the_thermostat(hass: HomeAssis
     published = json.loads(_published(mqtt_mock)[-1][1])
     assert published["presence"] == {"far": "glance", "near": "wake"}, "a glance from before: across the room"
     assert published["card_idle"] == 20 and "glance" in published
+    assert published["dim_off"] is True, "turning down past 1% turns a light off unless chosen otherwise"
     ids = {key: er.async_get(hass).async_get_entity_id("select", DOMAIN, f"{SERIAL}_{key}")
            for key in ("across_the_room", "close_up")}
     assert hass.states.get(ids["across_the_room"]).state == "Glance"

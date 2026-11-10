@@ -30,6 +30,9 @@ CONF_CARD_IDLE = "card_idle"
 FAR_GLANCE, FAR_WAKE, FAR_DARK = "glance", "wake", "dark"
 NEAR_WAKE, NEAR_GLANCE, NEAR_NONE = "wake", "glance", "none"
 CARD_IDLE = 20
+# Whether turning a light's dimmer down past 1% turns it off, and a
+# switch's ring switches it (protocol 8; on unless set False).
+CONF_DIM_OFF = "dim_off"
 # What a card is called on the Nest, where not its friendly name: by entity.
 CONF_NAMES = "names"
 # Where the thermostat's own card goes among them: before entities[n] (0, first).
