@@ -867,7 +867,7 @@ async def test_heating_and_hot_water_hours_today(hass: HomeAssistant, mqtt_mock,
     freezer.move_to("2026-11-09 10:00:00+00:00")
     thermostat = _thermostat(hass)
     heating = _source(hass, thermostat, "binary_sensor", "heating", "nest_thermostat_heating")
-    hot_water = _source(hass, thermostat, "binary_sensor", "hot_water", "nest_thermostat_hot_water")
+    hot_water = _source(hass, thermostat, "binary_sensor", "hot_water_active", "nest_thermostat_hot_water")
     hass.states.async_set(heating, "off")
     hass.states.async_set(hot_water, "on")
     entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},

@@ -25,7 +25,7 @@ from .entity import FledgeEntity
 
 # The Nest's binary sensors, by the end of their unique ids (bridge.rs), and
 # what each counts.
-CALLS = {"heating": "heating_today", "hot_water": "hot_water_today"}
+CALLS = {"heating": "heating_today", "hot_water_active": "hot_water_today"}
 # How often a running count moves on screen.
 TICK = timedelta(minutes=1)
 
