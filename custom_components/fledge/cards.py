@@ -173,7 +173,7 @@ def alarm(state: State, get: Any = lambda _: None, settings: Mapping[str, Any] |
         "kind": "alarm", "id": state.entity_id, "name": _name(state), "icon": attributes.get("icon") or "",
         "state": state.state, "modes": modes, "code": code if code in ("number", "text") else None,
         "code_length": length if isinstance(length, int) and length in CODE_LENGTHS else None,
-        "delay": None, "sensors": [], "can_force": alarmo(state),
+        "delay": None, "sensors": [], "can_force": alarmo(state), "takeover": settings.get("takeover", True) is not False,
     }
     if not alarmo(state):
         return out

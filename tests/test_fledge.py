@@ -978,7 +978,7 @@ def test_any_alarm_is_a_card_and_alarmo_s_says_more():
                                                                    "code_length": 4}})
     assert card == {"kind": "alarm", "id": "alarm_control_panel.house", "name": "House", "icon": "", "state": "armed_away",
                     "modes": [{"mode": "home", "name": ""}, {"mode": "away", "name": "Going out"}], "code": "number",
-                    "code_length": 4, "delay": None, "sensors": [], "can_force": False}
+                    "code_length": 4, "delay": None, "sensors": [], "can_force": False, "takeover": True}
     assert cards.card(State("alarm_control_panel.house", "disarmed", supported_features=32 | 16))["modes"] == \
         [{"mode": "vacation", "name": ""}, {"mode": "custom_bypass", "name": ""}], "in the ring's order"
     assert cards.card(State("alarm_control_panel.x", "disarmed", code_format="something"))["code"] is None
@@ -1085,13 +1085,15 @@ async def test_the_panel_saves_an_alarm_s_names_and_code_length(hass: HomeAssist
     await client.send_json({"id": 1, "type": "fledge/save", "entry_id": entry.entry_id, "wake": "chooser",
                             "entities": ["alarm_control_panel.house"],
                             "alarms": {"alarm_control_panel.house": {"names": {"away": "  Going out ", "home": " "},
-                                                                     "hidden": ["night"], "code_length": 4}}})
+                                                                     "hidden": ["night"], "code_length": 4,
+                                                                     "takeover": False}}})
     assert (await client.receive_json())["success"]
     assert entry.options["alarms"] == {"alarm_control_panel.house": {"names": {"away": "Going out"}, "hidden": ["night"],
-                                                                     "code_length": 4}}
+                                                                     "code_length": 4, "takeover": False}}
     await hass.async_block_till_done()
     card = json.loads(_published(mqtt_mock)[-1][1])["cards"][0]
     assert card["modes"] == [{"mode": "home", "name": ""}, {"mode": "away", "name": "Going out"}]
+    assert card["takeover"] is False, "it waits on its card"
 
     await client.send_json({"id": 2, "type": "fledge/save", "entry_id": entry.entry_id, "wake": "chooser",
                             "entities": ["alarm_control_panel.house"]})

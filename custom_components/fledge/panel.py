@@ -41,6 +41,7 @@ ALARM_SETTINGS = vol.Schema({
     vol.Optional("names", default={}): {vol.In([m for m, _ in cards.ALARM_MODES]): str},
     vol.Optional("hidden", default=[]): [vol.In([m for m, _ in cards.ALARM_MODES])],
     vol.Optional("code_length"): vol.Any(None, vol.All(int, vol.Range(min=4, max=12))),
+    vol.Optional("takeover", default=True): bool,
 })
 
 
@@ -52,6 +53,8 @@ def alarm_settings(alarms: dict[str, Any]) -> dict[str, Any]:
         one = {"names": names, "hidden": sorted(set(settings.get("hidden", []))),
                "code_length": settings.get("code_length")}
         one = {k: v for k, v in one.items() if v}
+        if settings.get("takeover", True) is False:
+            one["takeover"] = False
         if one:
             kept[entity] = one
     return kept

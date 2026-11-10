@@ -20,7 +20,8 @@
 </p>
 
 Walk up to the thermostat and it wakes to your devices, zoomed out around the
-thermostat itself, each card's name above it. Turn to browse, press to open:
+thermostat itself, each card's name above it. Turn to browse, press to open;
+nothing is switched or run from the cards themselves, only once a card is open:
 
 | Card | Press | Turn | Long press | Its menu |
 |-|-|-|-|-|
@@ -30,15 +31,16 @@ thermostat itself, each card's name above it. Turn to browse, press to open:
 | **Speaker** | its volume | the volume | play / pause | play / pause, previous, next; album art and progress on the card |
 | **Option (select)** | its options | through them | | e.g. the Nest's hot water boost |
 | **Blind, cover** | how open | the position | open / close | open, close |
-| **Scene, script, button** | runs it | | | |
+| **Scene, script, button** | opens it | | runs it | Run |
 | **Camera** | a fresh picture | | | its latest still fills the card |
-| **Alarm** | arms (its modes), cancels, or disarms | the mode, or each digit of the code | | its modes, named as you like; the code entered on the ring |
+| **Alarm** | opens it; again, arms (its modes), cancels, or disarms | the mode, or each digit of the code | | its modes, named as you like; the code entered on the ring |
 | **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
 
 An alarm works with any alarm panel in Home Assistant. Its code is entered
 with the ring: the digits sit round it, turn to each and press, hold to rub one
 out. When the entry delay starts, the thermostat lights straight into the code
-pad, the ring counting down; going off, it shows red until disarmed. With
+pad, the ring counting down; going off, it shows red until disarmed (or, with
+**Take over the screen** off in Fledge's panel, it waits on its card). With
 [Alarmo](https://github.com/nielsfaber/alarmo) the countdown is in seconds, the
 screen names the sensor that set it off, and a door left open can be armed
 past. Three wrong codes lock the pad for 30 seconds, longer each time; the code

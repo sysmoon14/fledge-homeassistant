@@ -21,11 +21,12 @@ const RING = {
   switch: [["Press", "On / off"]], fan: [["Press", "On / off"]], input_boolean: [["Press", "On / off"]],
   climate: [["Turn", "Target temperature"], ["Press", "Presets"]],
   media_player: [["Turn", "Volume"], ["Press", "Play / pause"], ["Behind the dial", "Album art"]],
-  scene: [["Press", "Runs it"]], script: [["Press", "Runs it"]], button: [["Press", "Presses it"]], input_button: [["Press", "Presses it"]],
+  scene: [["Press", "Opens it: press again for Run"], ["Hold, open", "Runs it"]], script: [["Press", "Opens it: press again for Run"], ["Hold, open", "Runs it"]],
+  button: [["Press", "Opens it: press again for Run"], ["Hold, open", "Presses it"]], input_button: [["Press", "Opens it: press again for Run"], ["Hold, open", "Presses it"]],
   camera: [["Press", "Full screen"], ["Full screen", "A new picture every 3 s"]],
   select: [["Turn", "Pick an option"], ["Press", "Choose it"]], input_select: [["Turn", "Pick an option"], ["Press", "Choose it"]],
   cover: [["Turn", "Position"], ["Press", "Open / close"]],
-  alarm_control_panel: [["Press", "Arm to a mode, or disarm"], ["Code", "Turn to each digit, press to enter it, hold to rub out"],
+  alarm_control_panel: [["Press", "Opens it: press again to arm or disarm"], ["Code", "Turn to each digit, press to enter it, hold to rub out"],
     ["Entry delay", "Takes the screen, straight to the code"]],
 };
 // An alarm's modes, in the ring's order, with Home Assistant's names (cards.py ALARM_MODES).
@@ -432,7 +433,6 @@ const FACES = {
     f.face(N.BLACK);
     f.icon(card.icon || "mdi:play-circle-outline", 240, 178, 104, N.WHITE);
     f.text(240, 288, card.name, 40, { max: 330 });
-    f.line(330, "Press to run", N.GREY);
   },
   camera(f, card, ctx) {
     f.face(N.BLACK);
@@ -474,7 +474,6 @@ const FACES = {
       f.ring(() => ({ c: N.AMBER, a: 0.6, shape: "short" }));
       f.dialWords(159, arming ? "Arming" : "Entry delay", N.AMBER, arming ? "mdi:home-export-outline" : "mdi:door-open");
       f.icon("mdi:shield-lock", 240, 246, 96, N.WHITE);
-      f.line(346, arming ? "Press to cancel" : card.code === "number" ? "Press to enter the code" : "Press to disarm", N.WHITE);
       return;
     }
     if (card.state === "triggered") {
@@ -483,20 +482,18 @@ const FACES = {
       f.icon("mdi:alarm-light", 240, 160, 96, N.WHITE);
       f.text(240, 270, "Alarm", 46, { weight: 500, kind: "medium" });
       if (card.sensors?.[0]) f.line(310, card.sensors[0], N.WHITE);
-      f.line(352, "Press to disarm", N.WHITE);
       return;
     }
     const armed = card.state.startsWith("armed_") ? card.state.slice(6) : null;
     f.face(armed && f.fledge ? ALARM_ARMED : N.BLACK);
     f.ring(() => (armed ? { c: ALARM_ARMED, a: 0.5, shape: "short" } : { c: N.DIM, shape: "short" }));
-    const [icon, accent, status, hint] = armed
-      ? [ALARM_ICONS[armed] || "mdi:shield-lock", ALARM_ARMED, `Armed · ${modeName(armed)}`, "Press to disarm"]
-      : card.state === "disarmed" ? ["mdi:shield-lock-open-outline", N.ECO, "Disarmed", card.modes.length ? "Press to arm" : ""]
-      : ["mdi:shield-lock-open-outline", N.DIM, card.state === "disarming" ? "Disarming…" : "Unavailable", ""];
+    const [icon, accent, status] = armed
+      ? [ALARM_ICONS[armed] || "mdi:shield-lock", ALARM_ARMED, `Armed · ${modeName(armed)}`]
+      : card.state === "disarmed" ? ["mdi:shield-lock-open-outline", N.ECO, "Disarmed"]
+      : ["mdi:shield-lock-open-outline", N.DIM, card.state === "disarming" ? "Disarming…" : "Unavailable"];
     f.icon(icon, 240, 172, 100, armed ? ALARM_ARMED : N.WHITE);
     f.text(240, 284, name, 40, { max: 330 });
     f.text(240, 324, status, 21, { weight: 500, c: accent, max: 320 });
-    f.line(360, hint, N.GREY);
   },
   // This thermostat's own card (screens.rs nest_card).
   nest(f, nest) {
@@ -742,7 +739,7 @@ class FledgePanel extends HTMLElement {
         room_sensor: d.room_sensor || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
         alarms: Object.fromEntries(Object.entries(d.alarms).filter(([k]) => entities.includes(k)).map(([k, v]) => [k, {
           names: Object.fromEntries(Object.entries(v.names || {}).filter(([, n]) => n.trim())),
-          hidden: v.hidden || [], code_length: v.code_length || null,
+          hidden: v.hidden || [], code_length: v.code_length || null, takeover: v.takeover !== false,
         }])),
       });
       const name = d.device_name.trim();
@@ -1087,6 +1084,9 @@ class FledgePanel extends HTMLElement {
         <p class="muted small">The Nest asks for a code whenever the alarm wants one, and it checks it; Fledge never keeps it. Three wrong codes lock the code pad for 30 s, longer each time.</p>
         ${a.code_format === "text" ? `<div class="banner warn inline">This alarm's code has letters, which the ring can't enter: disarm it from Home Assistant.</div>` : ""}
       </div>
+      <div class="kv"><span class="text"><span class="name">Take over the screen</span>
+          <span class="sub">When someone comes in (the entry delay) or it goes off, the Nest lights up on it; the code pad first, if it needs a code</span></span>
+        ${this._switch("alarmtakeover", settings.takeover !== false, "Take over the screen")}</div>
       <div class="banner ${alarmo ? "ok" : "warn"} inline">${alarmo
         ? "Alarmo: countdowns in seconds, the sensor that set it off, and “Arm anyway” with a door open."
         : "This alarm doesn't say how long its delays are, so the ring shows time running without the seconds."}</div>`;
@@ -1363,6 +1363,11 @@ class FledgePanel extends HTMLElement {
         break;
       }
       case "alarmcopy": this._copyAlarmo(d.order[this._sel]); return;
+      case "alarmtakeover": {
+        const settings = (d.alarms[d.order[this._sel]] ||= {});
+        settings.takeover = settings.takeover === false;
+        break;
+      }
       case "keepon": this._hass.callService("switch", "toggle", { entity_id: this._current.entities.keep_screen_on }); return;
       case "extoption": {
         const id = this._current.room_sensor_switch;
