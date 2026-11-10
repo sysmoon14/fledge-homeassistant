@@ -464,36 +464,27 @@ const FACES = {
     f.line(366, card.positionable ? "How open · press for more" : "Press to open or close", N.GREY);
     if (card.positionable) f.big(value, false, "%");
   },
-  // screens.rs alarm_screen, as its card shows it among the others.
+  // screens.rs alarm_screen, as its card shows it among the others: its
+  // state the large word in its colour, the whole ring lit the same.
   alarm(f, card) {
     const name = card.name || "Alarm";
     const modeName = (mode) => card.modes.find((m) => m.mode === mode)?.name || ALARM_MODES.find(([m]) => m === mode)?.[1] || mode;
-    if (card.state === "arming" || card.state === "pending") {
-      const arming = card.state === "arming";
-      f.face(f.fledge ? N.AMBER : N.BLACK);
-      f.ring(() => ({ c: N.AMBER, a: 0.6, shape: "short" }));
-      f.dialWords(159, arming ? "Arming" : "Entry delay", N.AMBER, arming ? "mdi:home-export-outline" : "mdi:door-open");
-      f.icon("mdi:shield-lock", 240, 246, 96, N.WHITE);
-      return;
-    }
-    if (card.state === "triggered") {
-      f.face(ALARM_RED);
-      f.ring(() => ({ c: f.fledge ? ALARM_RED : N.WHITE, a: 0.9, shape: "short" }));
-      f.icon("mdi:alarm-light", 240, 160, 96, N.WHITE);
-      f.text(240, 270, "Alarm", 46, { weight: 500, kind: "medium" });
-      if (card.sensors?.[0]) f.line(310, card.sensors[0], N.WHITE);
-      return;
-    }
     const armed = card.state.startsWith("armed_") ? card.state.slice(6) : null;
-    f.face(armed && f.fledge ? ALARM_ARMED : N.BLACK);
-    f.ring(() => (armed ? { c: ALARM_ARMED, a: 0.5, shape: "short" } : { c: N.DIM, shape: "short" }));
-    const [icon, accent, status] = armed
-      ? [ALARM_ICONS[armed] || "mdi:shield-lock", ALARM_ARMED, `Armed · ${modeName(armed)}`]
-      : card.state === "disarmed" ? ["mdi:shield-lock-open-outline", N.ECO, "Disarmed"]
-      : ["mdi:shield-lock-open-outline", N.DIM, card.state === "disarming" ? "Disarming…" : "Unavailable"];
-    f.icon(icon, 240, 172, 100, armed ? ALARM_ARMED : N.WHITE);
-    f.text(240, 284, name, 40, { max: 330 });
-    f.text(240, 324, status, 21, { weight: 500, c: accent, max: 320 });
+    const [accent, icon, word, under] = armed ? [ALARM_ARMED, ALARM_ICONS[armed] || "mdi:shield-lock", "Armed", modeName(armed)]
+      : card.state === "disarmed" ? [N.ECO, "mdi:shield-lock-open-outline", "Disarmed", ""]
+      : card.state === "arming" ? [N.AMBER, "mdi:home-export-outline", "Arming", "Leave now"]
+      : card.state === "pending" ? [N.AMBER, "mdi:door-open", "Entry delay", card.code === "number" ? "Enter the code" : ""]
+      : card.state === "triggered" ? [ALARM_RED, "mdi:alarm-light", "Alarm", card.sensors?.[0] || ""]
+      : card.state === "disarming" ? [N.AMBER, "mdi:shield-lock-open-outline", "Disarming", ""]
+      : [N.DIM, "mdi:shield-lock-open-outline", "Unavailable", ""];
+    const triggered = card.state === "triggered";
+    f.face(f.fledge || triggered ? (sameRgb(accent, N.DIM) ? N.BLACK : accent) : N.BLACK);
+    f.ring(() => ({ c: triggered && !f.fledge ? N.WHITE : accent, shape: "short" }));
+    const white = triggered;
+    f.icon(icon, 240, 136, 76, white ? N.WHITE : accent);
+    f.text(240, 216, name, 22, { weight: 500, kind: "medium", c: white && !f.fledge ? N.WHITE : N.GREY, max: 300 });
+    f.text(240, 284, word, 52, { weight: 500, kind: "medium", c: white ? N.WHITE : accent, max: 340 });
+    if (under) f.text(240, 326, under, 24, { max: 320 });
   },
   // This thermostat's own card (screens.rs nest_card).
   nest(f, nest) {
