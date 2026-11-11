@@ -605,7 +605,8 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     shown = found[0]
     assert (shown["entry_id"], shown["serial"], shown["climate"], shown["loaded"]) == \
         (entry.entry_id, SERIAL, "climate.nest_thermostat", True)
-    assert set(shown["entities"]) == {"keep_screen_on", "wake_to", "wake_screen", "across_the_room", "close_up"}
+    assert set(shown["entities"]) == {"keep_screen_on", "wake_to", "wake_screen", "across_the_room", "close_up",
+                                      "glance_layout", "night_glance"}
 
     await client.send_json_auto_id({"type": "fledge/preview", "entities": ["light.lamp", "light.gone"],
                                     "climate": "climate.nest_thermostat"})

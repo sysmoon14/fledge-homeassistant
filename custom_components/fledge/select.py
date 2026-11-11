@@ -1,5 +1,7 @@
 """Wake to: what the thermostat shows as it wakes, for automations to set
-(the speaker while music plays, the lights in the evening)."""
+(the speaker while music plays, the lights in the evening); and the
+glance's layout (the weather on rainy mornings, the big number while the
+car charges)."""
 
 from __future__ import annotations
 
@@ -7,7 +9,8 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_WAKE, CONF_WAKE_DEVICE, FAR_DARK,
+from . import glance
+from .const import (CONF_GLANCE_SETTINGS, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_WAKE, CONF_WAKE_DEVICE, FAR_DARK,
                     FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT,
                     presence)
 from .entity import FledgeEntity
@@ -16,7 +19,7 @@ CHOOSER, THERMOSTAT, AUTO = "Device chooser", "Thermostat", "Automatic"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, add: AddEntitiesCallback) -> None:
-    add([WakeTo(entry), Presence(entry, "across_the_room"), Presence(entry, "close_up")])
+    add([WakeTo(entry), Presence(entry, "across_the_room"), Presence(entry, "close_up"), GlanceLayout(entry)])
 
 
 class WakeTo(FledgeEntity, SelectEntity):
@@ -104,6 +107,40 @@ class Presence(FledgeEntity, SelectEntity):
         else:
             options[CONF_NEAR] = value
         self.hass.config_entries.async_update_entry(self.entry, options=options)
+
+    async def async_added_to_hass(self) -> None:
+        self.thermostat.wake_listeners.append(self._changed)
+        self.async_on_remove(lambda: self.thermostat.wake_listeners.remove(self._changed))
+
+    @callback
+    def _changed(self) -> None:
+        self.async_write_ha_state()
+
+
+# The glance's layouts by name, in the panel's order.
+LAYOUT_NAMES = {"Clock": "clock", "Temperature": "temp", "Weather": "weather", "Analog": "analog",
+                "Big number": "number", "Up next": "agenda"}
+
+
+class GlanceLayout(FledgeEntity, SelectEntity):
+    """The day's glance layout; its lines are each layout's own, as set in
+    the panel."""
+
+    _attr_icon = "mdi:clock-time-four-outline"
+    _attr_options = list(LAYOUT_NAMES)
+
+    def __init__(self, entry) -> None:
+        super().__init__(entry, "glance_layout")
+
+    @property
+    def current_option(self) -> str | None:
+        layout = glance.settings(self.entry.options.get(CONF_GLANCE_SETTINGS))["layout"]
+        return next((name for name, key in LAYOUT_NAMES.items() if key == layout), None)
+
+    async def async_select_option(self, option: str) -> None:
+        raw = dict(self.entry.options.get(CONF_GLANCE_SETTINGS) or {})
+        raw["layout"] = LAYOUT_NAMES[option]
+        self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options, CONF_GLANCE_SETTINGS: raw})
 
     async def async_added_to_hass(self) -> None:
         self.thermostat.wake_listeners.append(self._changed)

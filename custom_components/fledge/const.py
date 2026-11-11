@@ -15,6 +15,8 @@ CONF_WAKE_DEVICE = "wake_device"
 # the weather entity it shows.
 CONF_GLANCE = "glance"
 CONF_WEATHER = "weather"
+# The glance's layout, clock, lines and night (glance.SCHEMA).
+CONF_GLANCE_SETTINGS = "glance_settings"
 # The weather entity also feeds the Nest's own weather screen; an outdoor
 # thermometer, if chosen, gives its temperature instead of the forecast's.
 CONF_OUTDOOR = "outdoor_temperature"
@@ -74,11 +76,15 @@ PROTOCOL = 6
 PROTOCOL_ALARM = 9
 # Its own card hidden, and its Act as a thermostat switch.
 PROTOCOL_ROLE = 10
+# The glance's layouts, lines, 12-hour clock and night (glance.py).
+PROTOCOL_GLANCE = 11
 
 
-def needs(entities, show_thermostat: bool = True) -> int:
-    """The protocol a thermostat's build needs for these cards, and for its
-    own card hidden."""
+def needs(entities, show_thermostat: bool = True, glance: bool = False) -> int:
+    """The protocol a thermostat's build needs for these cards, for its
+    own card hidden, and for a glance of its own (`glance`)."""
+    if glance:
+        return PROTOCOL_GLANCE
     if not show_thermostat:
         return PROTOCOL_ROLE
     alarm = any(str(e).startswith("alarm_control_panel.") for e in entities or [])
@@ -98,7 +104,10 @@ def presence(options) -> tuple[str, str, int]:
 
 
 # The entities on the cards' device.
-PLATFORMS = ["select", "switch", "button", "sensor"]
+PLATFORMS = ["select", "switch", "button", "sensor", "binary_sensor"]
+# A glance shown for a while (the panel's Try on the Nest; not retained,
+# empty ends it): nestlocal's set/glance_try.
+GLANCE_TRY_TOPIC = "{prefix}/{serial}/set/glance_try"
 # A notification (fledge.notify), and the event its answer fires.
 ALERT_TOPIC = "{prefix}/{serial}/set/alert"
 EVENT_NOTIFICATION = "fledge_notification"

@@ -19,10 +19,10 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 
-from . import cards
+from . import cards, glance
 from .config_flow import options_from, thermostats
 from .feeds import acts_as_thermostat, option_switch, regulates_from_a_sensor, role_switch, wwn_switch
-from .const import (CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+from .const import (CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
                     DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
@@ -66,6 +66,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_thermostats)
     websocket_api.async_register_command(hass, ws_preview)
     websocket_api.async_register_command(hass, ws_save)
+    websocket_api.async_register_command(hass, ws_glance_preview)
+    websocket_api.async_register_command(hass, ws_glance_try)
 
 
 async def async_show(hass: HomeAssistant, version: str) -> None:
@@ -132,7 +134,11 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         # The switch that turns that option on (and reboots the Nest), on a
         # build that has it.
         "room_sensor_switch": option_switch(hass, serial),
-        "needs": needs(entry.options.get(CONF_ENTITIES), entry.options.get(CONF_SHOW_THERMOSTAT, True)),
+        "needs": needs(entry.options.get(CONF_ENTITIES), entry.options.get(CONF_SHOW_THERMOSTAT, True),
+                       glance.customised(entry.options.get(CONF_GLANCE_SETTINGS))),
+        # The glance's settings, defaults filled in, and whether it's night now.
+        "glance": glance.settings(entry.options.get(CONF_GLANCE_SETTINGS)),
+        "night": running.night if running else False,
         # The Nest's Act as a thermostat switch (protocol 10), and whether it is.
         "role_switch": role_switch(hass, serial),
         "acting": acts_as_thermostat(hass, serial),
@@ -198,6 +204,7 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Optional(CONF_THERMOSTAT, default=0): vol.All(int, vol.Range(min=0)),
     # An older panel doesn't send it: kept.
     vol.Optional(CONF_ALARMS): {cv.entity_id: ALARM_SETTINGS},
+    vol.Optional(CONF_GLANCE_SETTINGS): dict,
 })
 @websocket_api.require_admin
 @callback
@@ -221,6 +228,14 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         if msg.get(key) and not msg[key].startswith("sensor."):
             connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "Not a sensor")
             return
+    if CONF_GLANCE_SETTINGS in msg:
+        try:
+            glance_settings = glance.SCHEMA(msg[CONF_GLANCE_SETTINGS])
+        except vol.Invalid as err:
+            connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, f"The glance's settings: {err}")
+            return
+    else:
+        glance_settings = entry.options.get(CONF_GLANCE_SETTINGS)
     device = msg.get(CONF_WAKE_DEVICE)
     options = options_from({
         CONF_ENTITIES: entities,
@@ -241,7 +256,76 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_OUTDOOR: msg[CONF_OUTDOOR] if CONF_OUTDOOR in msg else entry.options.get(CONF_OUTDOOR),
         CONF_ROOM_SENSOR: msg[CONF_ROOM_SENSOR] if CONF_ROOM_SENSOR in msg else entry.options.get(CONF_ROOM_SENSOR),
         CONF_THERMOSTAT: msg[CONF_THERMOSTAT],
+        CONF_GLANCE_SETTINGS: glance_settings,
     }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()},
         alarm_settings(msg[CONF_ALARMS]) if CONF_ALARMS in msg else entry.options.get(CONF_ALARMS))
     hass.config_entries.async_update_entry(entry, options=options)
     connection.send_result(msg["id"], {"options": options})
+
+
+def _running(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> Any:
+    """The thermostat a glance command is for, loaded; else an error sent."""
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    running = getattr(entry, "runtime_data", None) if entry and entry.state is ConfigEntryState.LOADED else None
+    if entry is None or entry.domain != DOMAIN or running is None:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "No such thermostat")
+        return None
+    try:
+        glance.SCHEMA(msg["glance"])
+    except vol.Invalid as err:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, f"The glance's settings: {err}")
+        return None
+    return running
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "fledge/glance_preview",
+    vol.Required("entry_id"): str,
+    vol.Required("glance"): dict,
+    vol.Optional("night", default=False): bool,
+    vol.Optional("weather"): vol.Any(None, cv.entity_id),
+    vol.Optional("entities"): [cv.entity_id],
+})
+@websocket_api.require_admin
+@callback
+def ws_glance_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The glance as the Nest would get it now from the panel's settings
+    (unsaved), each line in words for the preview, and whether it's night
+    by those settings."""
+    running = _running(hass, connection, msg)
+    if running is None:
+        return
+    chosen = glance.settings(msg["glance"])
+    weather = msg.get("weather") if "weather" in msg else running.entry.options.get(CONF_WEATHER)
+    entities = msg.get("entities") or running.entities
+    sources = glance.Sources(hass, glance.twelve_hour(hass, chosen["hours"]), entities, running.feeds.hourly,
+                             running.feeds.daily, weather, chosen.get("calendar"))
+    night = msg["night"]
+    nights = chosen["night"]
+    layout = nights["layout"] if night else chosen["layout"]
+    specs = glance.lines_for(nights["lines"] if night else chosen["lines"], layout, night)
+    climate = _thermostat(hass, running.entry)["climate"]
+    shown, _ = running._glance(msg["glance"], night)  # noqa: SLF001 - the panel's own thermostat
+    connection.send_result(msg["id"], {
+        "glance": shown,
+        "lines": [sources.preview(spec, hass.states.get(climate) if climate else None) for spec in specs],
+        "twelve": sources.twelve,
+        "night_now": nights["mode"] != "off" and glance.is_night(hass, nights),
+    })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "fledge/glance_try",
+    vol.Required("entry_id"): str,
+    vol.Required("glance"): dict,
+    vol.Optional("night", default=False): bool,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_glance_try(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Shows the panel's glance (unsaved) on the Nest for 20 seconds."""
+    running = _running(hass, connection, msg)
+    if running is None:
+        return
+    await running.async_try_glance(msg["glance"], msg["night"])
+    connection.send_result(msg["id"], {"protocol": running.protocol})

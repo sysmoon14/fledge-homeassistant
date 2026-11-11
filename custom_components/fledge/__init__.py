@@ -15,6 +15,7 @@ import logging
 import math
 import time
 import uuid
+from datetime import timedelta
 from typing import Any
 
 import voluptuous as vol
@@ -27,15 +28,17 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, Se
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.debounce import Debouncer
-from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.event import (TrackTemplate, async_call_later, async_track_state_change_event,
+                                         async_track_template_result, async_track_time_interval)
+from homeassistant.helpers.template import Template
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
-from . import art, cards, panel, schedule
+from . import art, cards, glance, panel, schedule
 from .feeds import Feeds
 from .config_flow import thermostats
-from .const import (ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -208,7 +211,13 @@ class Thermostat:
         self._tracking: Any = None
         self._publisher = Debouncer(hass, _LOGGER, cooldown=0.2, immediate=True, function=self._publish)
         # The weather and a room's temperature, for the Nest itself.
-        self.feeds = Feeds(hass, serial, dict(entry.options))
+        self.feeds = Feeds(hass, serial, dict(entry.options), self._forecasts_changed)
+        # Whether the Nest has the night's glance, and who's told as it turns
+        # (the Night glance sensor).
+        self.night = False
+        self.night_listeners: list[Any] = []
+        # What the glance follows, beyond the cards (glance.watched).
+        self._glance_tracking: list[Any] = []
 
     async def async_start(self) -> None:
         if self.entities:
@@ -225,6 +234,7 @@ class Thermostat:
         self.version = str((await async_get_integration(self.hass, DOMAIN)).version or "")
         await self._updated()
         self._link()
+        self._watch_glance()
         await self._publish()
         await self.feeds.async_start()
 
@@ -288,7 +298,8 @@ class Thermostat:
         """A repair to make while the thermostat's build is older than this
         integration needs."""
         issue = f"outdated_{self.serial}"
-        if self.protocol is not None and self.protocol >= needs(self.entities, self.entry.options.get(CONF_SHOW_THERMOSTAT, True)):
+        if self.protocol is not None and self.protocol >= needs(self.entities, self.entry.options.get(CONF_SHOW_THERMOSTAT, True),
+                                                                glance.customised(self.entry.options.get(CONF_GLANCE_SETTINGS))):
             ir.async_delete_issue(self.hass, DOMAIN, issue)
         else:
             ir.async_create_issue(self.hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING,
@@ -296,8 +307,68 @@ class Thermostat:
                                   translation_placeholders={"serial": self.serial})
 
     @callback
+    def _watch_glance(self) -> None:
+        """Follows what the glance shows besides the cards: its sensors, the
+        calendar, the night's sensor, its templates; and each minute (the
+        night by the clock or the sun, rain coming, a template's "ago")."""
+        for unsubscribe in self._glance_tracking:
+            unsubscribe()
+        self._glance_tracking = []
+        far, near, _ = presence(self.entry.options)
+        if FAR_GLANCE not in (far, near):
+            return
+        chosen = glance.settings(self.entry.options.get(CONF_GLANCE_SETTINGS))
+        watched = glance.watched(chosen)
+        if glance.uses(chosen, "people"):
+            watched += self.hass.states.async_entity_ids("person")
+        if glance.uses(chosen, "playing"):
+            watched += self.hass.states.async_entity_ids("media_player")
+        if watched:
+            self._glance_tracking.append(async_track_state_change_event(self.hass, sorted(set(watched)), self._changed))
+        sources = glance.templates(chosen)
+        if sources:
+            info = async_track_template_result(
+                self.hass, [TrackTemplate(Template(t, self.hass), None) for t in sources], self._glance_changed)
+            self._glance_tracking.append(info.async_remove)
+        self._glance_tracking.append(async_track_time_interval(self.hass, self._glance_changed, timedelta(minutes=1)))
+
+    @callback
+    def _glance_changed(self, *_: Any) -> None:
+        """A template's result, or a minute gone: the glance again (sent only
+        if it changed)."""
+        self.hass.async_create_task(self._publisher.async_call())
+
+    @callback
+    def _forecasts_changed(self) -> None:
+        """New forecasts (Feeds): the glance's rain and high and low."""
+        self._glance_changed()
+
+    def _glance(self, raw: dict[str, Any] | None, night: bool | None = None) -> tuple[dict[str, Any], bool]:
+        """The glance as the Nest takes it, from glance settings `raw` (the
+        saved ones, or the panel's to try), at night as the settings say
+        unless `night` says; and whether it's the night's."""
+        options = self.entry.options
+        chosen = glance.settings(raw)
+        if night is None:
+            night = chosen["night"]["mode"] != "off" and glance.is_night(self.hass, chosen["night"])
+        offset = dt_util.now().utcoffset()
+        weather = self.hass.states.get(options[CONF_WEATHER]) if options.get(CONF_WEATHER) else None
+        base = cards.glance(weather, offset.total_seconds() if offset else 0)
+        sources = glance.Sources(self.hass, glance.twelve_hour(self.hass, chosen["hours"]), self.entities,
+                                 self.feeds.hourly, self.feeds.daily, options.get(CONF_WEATHER), chosen.get("calendar"))
+        return glance.build(sources, chosen, night, base), night
+
+    async def async_try_glance(self, raw: dict[str, Any] | None, night: bool) -> None:
+        """Shows the panel's glance (unsaved) on the Nest for a while."""
+        shown, _ = self._glance(raw, night)
+        await mqtt.async_publish(self.hass, GLANCE_TRY_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial),
+                                 json.dumps(shown, separators=(",", ":")))
+
+    @callback
     def async_stop(self) -> None:
         self.feeds.async_stop()
+        for unsubscribe in self._glance_tracking:
+            unsubscribe()
         for unsubscribe in self._unsubscribe:
             unsubscribe()
         if self._tracking:
@@ -313,7 +384,10 @@ class Thermostat:
         return [m for e in self.entities for m in cards.members(self.hass.states.get(e))]
 
     async def async_wake_changed(self) -> None:
-        """What it wakes to changed: sent on, and Wake to shows it."""
+        """What it wakes to (or the glance) changed: sent on, and Wake to
+        and the glance's entities show it."""
+        self._watch_glance()
+        self._check_protocol()
         await self._publish()
         for listener in list(self.wake_listeners):
             listener()
@@ -334,10 +408,13 @@ class Thermostat:
         name = self.thermostat_name()
         if name:
             shown["thermostat_name"] = name
+        night = False
         if FAR_GLANCE in (far, near):
-            offset = dt_util.now().utcoffset()
-            weather = self.hass.states.get(options[CONF_WEATHER]) if options.get(CONF_WEATHER) else None
-            shown["glance"] = cards.glance(weather, offset.total_seconds() if offset else 0)
+            shown["glance"], night = self._glance(options.get(CONF_GLANCE_SETTINGS))
+        if night != self.night:
+            self.night = night
+            for listener in list(self.night_listeners):
+                listener()
         payload = json.dumps(shown, separators=(",", ":"))
         if payload != self.last:
             self.last = payload
