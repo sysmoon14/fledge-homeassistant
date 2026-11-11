@@ -86,6 +86,9 @@ async def test_lines_worked_out_in_home_assistant(hass: HomeAssistant):
     assert line("forecast") == {"text": "High 12° · Low 5°", "icon": "mdi:thermometer"}
     assert line("rain") == {"text": "Rain from 15:10", "icon": "mdi:weather-rainy"}
     assert line("people") == {"text": "Alex home", "icon": "mdi:account"}
+    hass.states.async_set("person.sam", "home", {"friendly_name": "Sam Example-Smith"})
+    assert line("people")["text"] == "Alex and Sam home", "first names: full ones take the room"
+    hass.states.async_set("person.sam", "not_home", {"friendly_name": "Sam"})
     assert line("entity", entity="sensor.price") == {"text": "Electricity 24.3 p/kWh"}
     hass.states.async_set("sensor.cost", "1.5", {"friendly_name": "Today", "unit_of_measurement": "GBP", "device_class": "monetary"})
     assert line("entity", entity="sensor.cost") == {"text": "Today 1.50 GBP", "icon": "mdi:currency-gbp"} or \
@@ -275,9 +278,95 @@ async def test_a_template_that_doesn_t_read_leaves_its_line_empty(hass: HomeAssi
     hass.states.async_set("sensor.bins", "Recycling")
     await _set_up(hass, {"lines": {"clock": [{"source": "template", "template": "{{ nonsense("},
                                              {"source": "template", "template": "Bins: {{ states('sensor.bins') }}"}]}})
-    assert json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"] == [{"text": ""}, {"text": "Bins: Recycling"}]
+    assert json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"] == [{"text": "Bins: Recycling"}], \
+        "the empty line isn't sent: the next closes up"
     hass.states.async_set("sensor.bins", "Garden")
     await hass.async_block_till_done()
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
     await hass.async_block_till_done()
-    assert json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"][1] == {"text": "Bins: Garden"}, "a template follows its entities"
+    assert json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"][0] == {"text": "Bins: Garden"}, "a template follows its entities"
+
+
+async def test_a_line_with_nothing_to_say_shows_something_else_or_closes_up(hass: HomeAssistant):
+    hass.states.async_set("media_player.kitchen", "idle", {})
+    hass.states.async_set("binary_sensor.door", "off", {"friendly_name": "Front door", "device_class": "door"})
+    hass.states.async_set("sensor.price", "31", {"friendly_name": "Price"})
+    sources = glance.Sources(hass, False, ["media_player.kitchen"], now=_at(hass, 12))
+    line = lambda **spec: sources.line(spec)  # noqa: E731
+    assert line(source="playing") == {"text": ""}
+    assert line(**{"source": "playing", "else": "whats_on"}) == {"kind": "whats_on"}, "nothing playing: what's on instead"
+    assert line(**{"source": "weather", "else": "date"}) == {"kind": "date"}, "no weather chosen: nothing to say either"
+    door = {"source": "entity", "entity": "binary_sensor.door", "when": "on", "else": "date_short"}
+    assert line(**door) == {"kind": "date_short"}, "the door shut: its line gives way"
+    hass.states.async_set("binary_sensor.door", "on", {"friendly_name": "Front door", "device_class": "door"})
+    assert line(**door)["text"].startswith("Front door ")
+    price = {"source": "entity", "entity": "sensor.price"}
+    assert line(**price, when="above", value="30")["text"] == "Price 31"
+    assert line(**price, when="below", value="30") == {"text": ""}
+    assert line(**price, when="is", value="31")["text"] == "Price 31" and line(**price, when="is_not", value="31") == {"text": ""}
+    hass.states.async_set("sensor.price", "unavailable", {"friendly_name": "Price"})
+    assert line(**price, when="is_not", value="31") == {"text": ""}, "not reporting: not shown when asked for a state"
+    chosen = glance.settings({"lines": {"clock": [{"source": "playing"}, {"source": "date"}, {"source": "rain"}]}})
+    assert glance.build(sources, chosen, False, {"offset": 0})["lines"] == [{"kind": "date"}], "empty lines aren't sent"
+
+
+async def test_the_date_s_words_order_and_the_night_s_level(hass: HomeAssistant):
+    words = {"days": ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"],
+             "days_short": ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."],
+             "months": ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+                        "novembre", "décembre"],
+             "months_short": ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]}
+    moment = datetime(2026, 11, 11, 9, 0)
+    assert glance.date_text(moment, None, False, False) == "Wednesday 11 November"
+    assert glance.date_text(moment, None, True, True) == "Wed, Nov 11"
+    assert glance.date_text(moment, words, False, False) == "mercredi 11 novembre"
+    hass.config.country = "US"
+    assert glance.month_first(hass, "auto") and not glance.month_first(hass, "dmy")
+    chosen = glance.settings({"words": words, "date": "mdy", "night": {"mode": "hours", "level": 35}})
+    sources = glance.Sources(hass, False, [], words=chosen["words"], month_first=glance.month_first(hass, chosen["date"]))
+    night = glance.build(sources, chosen, True, {"offset": 0})
+    assert (night["words"], night["date_order"], night["dim"], night["dim_level"]) == (words, "mdy", True, 0.35)
+    assert glance.settings({"words": {"days": ["x"]}}) == glance.settings({}), "half the words: none"
+
+
+async def test_up_next_is_the_next_event_not_yet_over(hass: HomeAssistant):
+    now = _at(hass, 13)
+    tz = dt_util.get_default_time_zone()
+    events = glance.parse_events([
+        {"start": "2026-11-11", "end": "2026-11-12", "summary": "Bin day"},
+        {"start": datetime(2026, 11, 11, 12, 0, tzinfo=tz).isoformat(), "end": datetime(2026, 11, 11, 14, 0, tzinfo=tz).isoformat(), "summary": "Lunch"},
+        {"start": datetime(2026, 11, 11, 16, 30, tzinfo=tz).isoformat(), "end": datetime(2026, 11, 11, 17, 0, tzinfo=tz).isoformat(), "summary": "Dentist"},
+        {"start": "2026-11-12", "end": "2026-11-13", "summary": "Birthday"},
+    ])
+    title = lambda at, skip=False: (glance.next_event(events, at, skip) or {}).get("title")  # noqa: E731
+    assert title(now) == "Dentist", "lunch began an hour ago: the one after it, which the calendar entity alone would hide"
+    assert title(_at(hass, 12, 5)) == "Lunch", "just begun: still it"
+    assert title(_at(hass, 17, 30)) == "Bin day", "nothing more today but the all-day one"
+    assert title(_at(hass, 17, 30), True) is None and title(now, True) == "Dentist", "all-day ones left out"
+    sources = glance.Sources(hass, False, [], now=now, events=events)
+    assert sources.line({"source": "calendar"}) == {"text": "16:30 Dentist", "icon": "mdi:calendar"}
+    assert sources.event() == {"title": "Dentist", "start": int(datetime(2026, 11, 11, 16, 30, tzinfo=tz).timestamp()), "all_day": False}
+
+
+async def test_the_glance_asks_its_calendars_for_their_events(hass: HomeAssistant, mqtt_mock) -> None:
+    from homeassistant.core import SupportsResponse
+
+    start = dt_util.now() + timedelta(hours=3)
+    asked = []
+
+    async def get_events(call):
+        asked.append(call.data["entity_id"])
+        entity = call.data["entity_id"]
+        return {entity: {"events": [{"start": start.isoformat(), "end": (start + timedelta(hours=1)).isoformat(),
+                                     "summary": f"From {entity}"}]}}
+
+    hass.services.async_register("calendar", "get_events", get_events, supports_response=SupportsResponse.ONLY)
+    hass.states.async_set("calendar.home", "off", {})
+    hass.states.async_set("calendar.work", "off", {})
+    await _set_up(hass, {"layout": "agenda", "calendars": ["calendar.home", "calendar.work"]})
+    await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+    await hass.async_block_till_done()
+    assert sorted(set(asked)) == ["calendar.home", "calendar.work"]
+    sent = json.loads(_published(mqtt_mock)[-1][1])["glance"]
+    assert sent["event"]["title"] == "From calendar.home" and sent["event"]["start"] == int(start.timestamp())

@@ -56,11 +56,35 @@ RAIN_AHEAD = timedelta(hours=12)
 TEMPLATE_LENGTH = 255
 TEXT_LENGTH = 80
 
+# What a line can show instead while it has nothing to say: the sources
+# that need nothing more chosen.
+FALLBACKS = ("none", *NEST_KINDS, "forecast", "rain", "sun", "playing", "calendar", "people")
+# When an entity's line shows: always, or only while its state is on, off,
+# a given state (or not), or a number above or below a given one.
+WHENS = ("always", "on", "off", "is", "is_not", "above", "below")
+# Countries that write the month before the day, for Automatic.
+MONTH_FIRST = {"US", "PH", "BZ", "FM", "PW"}
+# How far ahead the next event is looked for, and a started one still counts.
+EVENTS_AHEAD = timedelta(days=8)
+EVENT_STARTED = timedelta(minutes=10)
+
 LINE = vol.Schema({
     vol.Required("source"): vol.In(SOURCES),
     vol.Optional("entity"): vol.Any(None, cv.entity_id),
     vol.Optional("label"): vol.Any(None, vol.All(str, vol.Length(max=40))),
     vol.Optional("template"): vol.Any(None, vol.All(str, vol.Length(max=TEMPLATE_LENGTH))),
+    vol.Optional("when"): vol.In(WHENS),
+    vol.Optional("value"): vol.Any(None, vol.All(str, vol.Length(max=40))),
+    vol.Optional("else"): vol.In(FALLBACKS),
+})
+NAME = vol.All(str, vol.Length(min=1, max=24))
+# The date's words in another language, as the panel (the browser) names
+# them: days from Sunday, months from January.
+WORDS = vol.Schema({
+    vol.Required("days"): vol.All([NAME], vol.Length(min=7, max=7)),
+    vol.Required("days_short"): vol.All([NAME], vol.Length(min=7, max=7)),
+    vol.Required("months"): vol.All([NAME], vol.Length(min=12, max=12)),
+    vol.Required("months_short"): vol.All([NAME], vol.Length(min=12, max=12)),
 })
 LINES = {vol.In(LAYOUTS): [LINE]}
 TIME = vol.Match(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -72,7 +96,16 @@ SCHEMA = vol.Schema({
     vol.Optional("big"): vol.Any(None, cv.entity_id),
     vol.Optional("big_label"): vol.Any(None, vol.All(str, vol.Length(max=40))),
     vol.Optional("calendar"): vol.Any(None, cv.entity_domain("calendar")),
+    # Up next and the next event's line look through all of these (with
+    # none, `calendar`, from before there could be several).
+    vol.Optional("calendars"): vol.All([cv.entity_domain("calendar")], vol.Length(max=6)),
+    vol.Optional("skip_all_day", default=False): bool,
     vol.Optional("colour", default=True): bool,
+    # The date: the month first or the day (Automatic: from where Home
+    # Assistant is), and its words where not English.
+    vol.Optional("date", default="auto"): vol.In(["auto", "dmy", "mdy"]),
+    vol.Optional("words"): vol.Any(None, WORDS),
+    vol.Optional("language"): vol.Any(None, vol.All(str, vol.Length(max=20))),
     vol.Optional("night", default={}): vol.Schema({
         vol.Optional("mode", default="off"): vol.In(NIGHT_MODES),
         vol.Optional("after", default=30): vol.All(int, vol.Range(min=-180, max=180)),
@@ -83,6 +116,8 @@ SCHEMA = vol.Schema({
         vol.Optional("state", default="on"): vol.In(["on", "off"]),
         vol.Optional("layout", default="analog"): vol.In(LAYOUTS),
         vol.Optional("dim", default=True): bool,
+        # How bright the dimmed glance stays, in percent.
+        vol.Optional("level", default=60): vol.All(int, vol.Range(min=20, max=100)),
         vol.Optional("lines", default={}): LINES,
     }),
 })
@@ -124,6 +159,72 @@ def time_text(moment: datetime, twelve: bool) -> str:
     if not twelve:
         return moment.strftime("%H:%M")
     return f"{(moment.hour + 11) % 12 + 1}:{moment.minute:02d} {'AM' if moment.hour < 12 else 'PM'}"
+
+
+DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December"]
+
+
+def date_text(moment: datetime, words: dict[str, list[str]] | None, month_first: bool, short: bool) -> str:
+    """The date as the Nest says it (screens::glance_date): "Sunday 8
+    November", "Sun 8 Nov"; the month first, "Sunday, November 8"."""
+    weekday, month = (moment.weekday() + 1) % 7, moment.month - 1
+    if words:
+        day_name, month_name = (words["days_short"][weekday], words["months_short"][month]) if short \
+            else (words["days"][weekday], words["months"][month])
+    else:
+        day_name, month_name = (DAYS[weekday][:3], MONTHS[month][:3]) if short else (DAYS[weekday], MONTHS[month])
+    return f"{day_name}, {month_name} {moment.day}" if month_first else f"{day_name} {moment.day} {month_name}"
+
+
+def month_first(hass: HomeAssistant, order: str) -> bool:
+    """Whether the date reads November 8: as chosen, or Automatic from
+    where Home Assistant is."""
+    if order in ("dmy", "mdy"):
+        return order == "mdy"
+    return (hass.config.country or "").upper() in MONTH_FIRST
+
+
+def calendars(chosen: dict[str, Any]) -> list[str]:
+    """The calendars the next event comes from."""
+    return list(chosen.get("calendars") or ([chosen["calendar"]] if chosen.get("calendar") else []))
+
+
+def next_event(events: list[dict[str, Any]], now: datetime, skip_all_day: bool) -> dict[str, Any] | None:
+    """What's up next among `events` ({title, start, end, all_day}, times
+    aware): the first not yet over that started no more than ten minutes
+    ago; today's all-day events after today's others."""
+    midnight = dt_util.start_of_local_day(now) + timedelta(days=1)
+    best, best_key = None, None
+    for event in events:
+        if event["end"] <= now:
+            continue
+        if event["all_day"]:
+            if skip_all_day:
+                continue
+            key = event["start"] if event["start"] > now else midnight - timedelta(seconds=1)
+        elif event["start"] < now - EVENT_STARTED:
+            continue
+        else:
+            key = event["start"]
+        if best_key is None or key < best_key:
+            best, best_key = event, key
+    return best
+
+
+def parse_events(found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A calendar's events (calendar.get_events) as next_event takes them."""
+    events = []
+    for event in found:
+        start_raw, end_raw = str(event.get("start") or ""), str(event.get("end") or "")
+        all_day = len(start_raw) == 10
+        start, end = _local(start_raw), _local(end_raw)
+        if start is None or not event.get("summary"):
+            continue
+        events.append({"title": str(event["summary"]), "start": start, "end": end or start + timedelta(hours=1),
+                       "all_day": all_day})
+    return events
 
 
 def degrees(value: Any) -> str | None:
@@ -270,7 +371,14 @@ class Sources:
 
     def __init__(self, hass: HomeAssistant, twelve: bool, cards: list[str], hourly: list[dict] | None = None,
                  daily: list[dict] | None = None, weather: str | None = None, calendar: str | None = None,
-                 now: datetime | None = None) -> None:
+                 now: datetime | None = None, events: list[dict] | None = None, skip_all_day: bool = False,
+                 words: dict[str, list[str]] | None = None, month_first: bool = False) -> None:
+        # The calendars' coming events (Thermostat keeps them); None: only
+        # what the calendar entity itself says.
+        self.events = events
+        self.skip_all_day = skip_all_day
+        self.words = words
+        self.month_first = month_first
         self.hass = hass
         self.twelve = twelve
         self.cards = cards
@@ -281,9 +389,20 @@ class Sources:
         self.now = dt_util.as_local(now or dt_util.now())
 
     def line(self, spec: dict[str, Any]) -> dict[str, Any]:
-        """One line as the Nest takes it: a kind, or words and an icon
-        (empty words: the line left empty, keeping its place)."""
+        """One line as the Nest takes it: a kind, or words and an icon;
+        with nothing to say, what it shows instead (`else`), if anything
+        (empty words: nothing)."""
+        out = self._line(spec)
+        if out == {"text": ""} and spec.get("else") not in (None, "none"):
+            out = self._line({"source": spec["else"]})
+        return out
+
+    def _line(self, spec: dict[str, Any]) -> dict[str, Any]:
         source = spec.get("source", "none")
+        if source == "weather":
+            # The Nest's own, but with no weather it has nothing to say.
+            weather = self.hass.states.get(self.weather) if self.weather else None
+            return {"kind": source} if weather is not None and weather.state not in ("unavailable", "unknown") else {"text": ""}
         if source in NEST_KINDS:
             return {"kind": source}
         try:
@@ -302,17 +421,21 @@ class Sources:
     def preview(self, spec: dict[str, Any], climate: State | None) -> dict[str, Any]:
         """A line as the panel's preview draws it: the Nest's own kinds
         worked out here too, from the thermostat's climate entity."""
-        out = self.line(spec)
+        out = self._preview(spec, climate)
+        if not out.get("text") and spec.get("else") not in (None, "none"):
+            out = {**self._preview({"source": spec["else"]}, climate), "instead": True}
+        return out
+
+    def _preview(self, spec: dict[str, Any], climate: State | None) -> dict[str, Any]:
+        out = self._line(spec)
         kind = out.get("kind")
         if kind is None:
             return out
         weather = self.hass.states.get(self.weather) if self.weather else None
         attrs = climate.attributes if climate is not None else {}
         text, icon = "", None
-        if kind == "date":
-            text = f"{self.now.strftime('%A')} {self.now.day} {self.now.strftime('%B')}"
-        elif kind == "date_short":
-            text = f"{self.now.strftime('%a')} {self.now.day} {self.now.strftime('%b')}"
+        if kind in ("date", "date_short"):
+            text = date_text(self.now, self.words, self.month_first, kind == "date_short")
         elif kind == "time":
             text, icon = time_text(self.now, self.twelve), "mdi:clock-outline"
         elif kind == "inside" and attrs.get("current_temperature") is not None:
@@ -394,11 +517,18 @@ class Sources:
     def event(self) -> dict[str, Any] | None:
         """The chosen calendar's next (or current) event, as the Nest's Up
         next takes it."""
+        if self.events is not None:
+            event = next_event(self.events, self.now, self.skip_all_day)
+            if event is None:
+                return None
+            return {"title": event["title"][:TEXT_LENGTH], "start": int(event["start"].timestamp()), "all_day": event["all_day"]}
+        # Without its events (a calendar that can't list them): what the
+        # calendar entity says, its current or next one.
         state = self.hass.states.get(self.calendar) if self.calendar else None
         if state is None or not state.attributes.get("message"):
             return None
         start = _local(state.attributes.get("start_time"))
-        if start is None:
+        if start is None or (self.skip_all_day and state.attributes.get("all_day")):
             return None
         return {"title": str(state.attributes["message"])[:TEXT_LENGTH], "start": int(start.timestamp()),
                 "all_day": bool(state.attributes.get("all_day"))}
@@ -418,7 +548,8 @@ class Sources:
         people = self.hass.states.async_all("person")
         if not people:
             return None
-        home = [p.attributes.get("friendly_name") or p.entity_id for p in people if p.state == "home"]
+        # First names: full ones take the line's room.
+        home = [str(p.attributes.get("friendly_name") or p.entity_id).split()[0] for p in people if p.state == "home"]
         if not home:
             return "Nobody home", "mdi:home-export-outline"
         if len(home) <= 2:
@@ -427,7 +558,7 @@ class Sources:
 
     def _entity(self, spec: dict) -> tuple[str, str | None] | None:
         state = self.hass.states.get(spec.get("entity") or "")
-        if state is None:
+        if state is None or not self._shows(state, spec):
             return None
         label = (spec.get("label") or "").strip() or state.attributes.get("friendly_name") or state.entity_id
         unit = state.attributes.get("unit_of_measurement") or ""
@@ -444,6 +575,26 @@ class Sources:
             icon = next((f"mdi:currency-{code}" for code, signs in (("gbp", "£GBP"), ("usd", "$USD"), ("eur", "€EUR"))
                          if any(sign in unit for sign in (signs[0], signs[1:]))), None)
         return text, icon
+
+    def _shows(self, state: State, spec: dict) -> bool:
+        """Whether an entity's line shows now (`when`): always, or only
+        while its state is as asked. Never while it isn't reporting, if asked."""
+        when = spec.get("when") or "always"
+        if when == "always":
+            return True
+        if state.state in ("unknown", "unavailable"):
+            return False
+        value = (spec.get("value") or "").strip().lower()
+        if when in ("on", "off"):
+            return state.state == when
+        if when in ("is", "is_not"):
+            same = value in (state.state.lower(), said_state(self.hass, state).lower())
+            return same if when == "is" else not same
+        try:
+            reading, limit = float(state.state), float(value)
+        except ValueError:
+            return False
+        return reading > limit if when == "above" else reading < limit
 
     def _template(self, spec: dict) -> tuple[str, None] | None:
         source = (spec.get("template") or "").strip()
@@ -471,15 +622,17 @@ def build(sources: Sources, chosen: dict[str, Any], night: bool, base: dict[str,
     out = dict(base)
     out["layout"] = layout
     out["clock"] = {"hours": 12 if sources.twelve else 24, "ampm": chosen["ampm"]}
-    sent = [sources.line(spec) for spec in lines]
-    while sent and sent[-1] == {"text": ""}:
-        sent.pop()
-    out["lines"] = sent
+    # A line with nothing to say isn't sent: those after it close up.
+    out["lines"] = [said for said in (sources.line(spec) for spec in lines) if said != {"text": ""}]
+    if sources.words:
+        out["words"] = sources.words
+    if sources.month_first:
+        out["date_order"] = "mdy"
     if layout == "number":
         big = sources.big(chosen.get("big"), chosen.get("big_label"))
         if big:
             out["big"] = big
-    if layout == "agenda" or any(spec.get("source") == "calendar" for spec in lines):
+    if layout == "agenda":
         event = sources.event()
         if event:
             out["event"] = event
@@ -488,6 +641,8 @@ def build(sources: Sources, chosen: dict[str, Any], night: bool, base: dict[str,
     if night:
         out["night"] = True
         out["dim"] = nights["dim"]
+        if nights["dim"]:
+            out["dim_level"] = nights["level"] / 100
     return out
 
 
@@ -499,10 +654,16 @@ def watched(chosen: dict[str, Any]) -> list[str]:
         for spec in lines:
             if spec.get("source") in ("entity", "playing") and spec.get("entity"):
                 entities.add(spec["entity"])
-    for key in ("big", "calendar"):
-        if chosen.get(key):
-            entities.add(chosen[key])
+    if chosen.get("big"):
+        entities.add(chosen["big"])
     return sorted(entities)
+
+
+def wants_events(chosen: dict[str, Any]) -> bool:
+    """Whether the glance, day or night, shows the next event."""
+    night = chosen["night"]
+    return bool(calendars(chosen)) and (chosen["layout"] == "agenda" or (night["mode"] != "off" and night["layout"] == "agenda")
+                                        or uses(chosen, "calendar"))
 
 
 def night_sensor(chosen: dict[str, Any]) -> str | None:
@@ -521,7 +682,7 @@ def templates(chosen: dict[str, Any]) -> list[str]:
 
 def uses(chosen: dict[str, Any], source: str) -> bool:
     """Whether any of the glance's lines, day or night, come from `source`."""
-    return any(spec.get("source") == source
+    return any(source in (spec.get("source"), spec.get("else"))
                for lines in (*chosen["lines"].values(), *chosen["night"]["lines"].values()) for spec in lines)
 
 

@@ -178,6 +178,8 @@ def _migrate(hass: HomeAssistant, entry: ConfigEntry) -> None:
 # How often, at most, a change of one of the glance's own sensors (a line's,
 # the big number's) reaches the Nest, in seconds.
 LINES_EVERY = 15
+# How often the glance's calendars are asked for their coming events.
+EVENTS_EVERY = timedelta(minutes=5)
 
 # How long an alarm has to change state after a command before it's taken
 # that it didn't (Alarmo, given a wrong code, says nothing).
@@ -224,6 +226,10 @@ class Thermostat:
         self.night_listeners: list[Any] = []
         # What the glance follows, beyond the cards (glance.watched).
         self._glance_tracking: list[Any] = []
+        # The glance's calendars' coming events, and the calendars they are
+        # of; None until fetched, or where a calendar can't list them.
+        self.events: list[dict[str, Any]] | None = None
+        self._events_of: list[str] = []
 
     async def async_start(self) -> None:
         if self.entities:
@@ -341,6 +347,13 @@ class Thermostat:
         watched = [e for e in glance.watched(chosen) if e not in self.entities]
         if watched:
             self._glance_tracking.append(async_track_state_change_event(self.hass, watched, self._line_changed))
+        if glance.wants_events(chosen):
+            # The next event: as a calendar changes, and every few minutes.
+            self._glance_tracking.append(async_track_state_change_event(self.hass, glance.calendars(chosen), self._events_changed))
+            self._glance_tracking.append(async_track_time_interval(self.hass, self._events_changed, EVENTS_EVERY))
+            self._events_changed()
+        else:
+            self.events, self._events_of = None, []
         sources = glance.templates(chosen)
         tracked = []
         for source in sources:
@@ -362,6 +375,32 @@ class Thermostat:
         self.hass.async_create_task(self._publisher.async_call())
 
     @callback
+    def _events_changed(self, *_: Any) -> None:
+        self.hass.async_create_task(self._fetch_events())
+
+    async def _fetch_events(self) -> None:
+        """The glance's calendars' events for the days ahead, then the
+        glance again. A calendar that can't list them leaves events None:
+        the glance falls back on what the calendar entity says."""
+        chosen = glance.settings(self.entry.options.get(CONF_GLANCE_SETTINGS))
+        wanted = glance.calendars(chosen)
+        now = dt_util.now()
+        found: list[dict[str, Any]] | None = []
+        for calendar in wanted:
+            try:
+                response = await self.hass.services.async_call(
+                    "calendar", "get_events",
+                    {"entity_id": calendar, "start_date_time": now, "end_date_time": now + glance.EVENTS_AHEAD},
+                    blocking=True, return_response=True)
+            except Exception:  # noqa: BLE001 - a calendar that can't: what its entity says instead
+                _LOGGER.debug("No events from %s", calendar, exc_info=True)
+                found = None
+                break
+            found += glance.parse_events(((response or {}).get(calendar) or {}).get("events") or [])
+        self.events, self._events_of = found, wanted
+        await self._publisher.async_call()
+
+    @callback
     def _line_changed(self, _event: Event) -> None:
         self.hass.async_create_task(self._lines.async_call())
 
@@ -372,8 +411,12 @@ class Thermostat:
 
     def glance_sources(self, chosen: dict[str, Any], weather: str | None, entities: list[str] | None = None) -> glance.Sources:
         """What the glance's lines are worked out from, for `chosen` settings."""
+        wanted = glance.calendars(chosen)
         return glance.Sources(self.hass, glance.twelve_hour(self.hass, chosen["hours"]), entities or self.entities,
-                              self.feeds.hourly, self.feeds.daily, weather, chosen.get("calendar"))
+                              self.feeds.hourly, self.feeds.daily, weather, wanted[0] if wanted else None,
+                              events=self.events if wanted == self._events_of else None,
+                              skip_all_day=chosen["skip_all_day"], words=chosen.get("words"),
+                              month_first=glance.month_first(self.hass, chosen["date"]))
 
     def glance_for(self, raw: dict[str, Any] | None, night: bool | None = None, weather: Any = False,
                    entities: list[str] | None = None) -> tuple[dict[str, Any], bool]:
