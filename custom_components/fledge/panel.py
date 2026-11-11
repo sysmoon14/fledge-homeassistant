@@ -21,9 +21,9 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 
 from . import cards
 from .config_flow import options_from, thermostats
-from .feeds import option_switch, regulates_from_a_sensor
+from .feeds import acts_as_thermostat, option_switch, regulates_from_a_sensor, role_switch, wwn_switch
 from .const import (CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
-                    DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_FAR, CONF_NEAR,
+                    DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
 FRONTEND = Path(__file__).parent / "frontend"
@@ -132,7 +132,12 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         # The switch that turns that option on (and reboots the Nest), on a
         # build that has it.
         "room_sensor_switch": option_switch(hass, serial),
-        "needs": needs(entry.options.get(CONF_ENTITIES)),
+        "needs": needs(entry.options.get(CONF_ENTITIES), entry.options.get(CONF_SHOW_THERMOSTAT, True)),
+        # The Nest's Act as a thermostat switch (protocol 10), and whether it is.
+        "role_switch": role_switch(hass, serial),
+        "acting": acts_as_thermostat(hass, serial),
+        # Its Works With Nest boiler switch, on a Heat Link model.
+        "wwn_switch": wwn_switch(hass, serial),
         "version": running.version if running else None,
     }
 
@@ -185,6 +190,7 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     vol.Optional(CONF_NEAR): vol.In([NEAR_WAKE, NEAR_GLANCE, NEAR_NONE]),
     vol.Optional(CONF_CARD_IDLE): vol.All(int, vol.Range(min=5, max=600)),
     vol.Optional(CONF_DIM_OFF): bool,
+    vol.Optional(CONF_SHOW_THERMOSTAT): bool,
     vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_OUTDOOR): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_ROOM_SENSOR): vol.Any(None, cv.entity_id),
@@ -228,6 +234,8 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_CARD_IDLE: msg.get(CONF_CARD_IDLE) or entry.options.get(CONF_CARD_IDLE),
         # An older panel doesn't send it: kept.
         CONF_DIM_OFF: msg[CONF_DIM_OFF] if CONF_DIM_OFF in msg else entry.options.get(CONF_DIM_OFF, True),
+        CONF_SHOW_THERMOSTAT: (msg[CONF_SHOW_THERMOSTAT] if CONF_SHOW_THERMOSTAT in msg
+                               else entry.options.get(CONF_SHOW_THERMOSTAT, True)),
         CONF_WEATHER: msg.get(CONF_WEATHER),
         # An older panel doesn't send these: kept.
         CONF_OUTDOOR: msg[CONF_OUTDOOR] if CONF_OUTDOOR in msg else entry.options.get(CONF_OUTDOOR),

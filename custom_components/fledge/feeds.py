@@ -112,6 +112,33 @@ def option_switch(hass: HomeAssistant, serial: str) -> str | None:
                  if e.domain == "switch" and (e.unique_id or "").endswith("_external_temperature_option")), None)
 
 
+def role_switch(hass: HomeAssistant, serial: str) -> str | None:
+    """The Nest's Act as a thermostat switch (protocol 10): off, it's a panel
+    on the wall, its heating off and its thermostat entities gone."""
+    device = thermostats(hass).get(serial)
+    if device is None:
+        return None
+    return next((e.entity_id for e in er.async_entries_for_device(er.async_get(hass), device.id)
+                 if e.domain == "switch" and (e.unique_id or "").endswith("_act_as_thermostat")), None)
+
+
+def wwn_switch(hass: HomeAssistant, serial: str) -> str | None:
+    """The Nest's Works With Nest boiler switch, on a Heat Link model:
+    heats through W1 without a Heat Link (and reboots the Nest)."""
+    device = thermostats(hass).get(serial)
+    if device is None:
+        return None
+    return next((e.entity_id for e in er.async_entries_for_device(er.async_get(hass), device.id)
+                 if e.domain == "switch" and (e.unique_id or "").endswith("_wwn_boiler_option")), None)
+
+
+def acts_as_thermostat(hass: HomeAssistant, serial: str) -> bool:
+    """Whether the Nest acts as a thermostat: unless its switch says not."""
+    switch = role_switch(hass, serial)
+    state = hass.states.get(switch) if switch else None
+    return state is None or state.state != "off"
+
+
 class Feeds:
     """One Nest's weather and room readings, kept sent."""
 
@@ -211,7 +238,10 @@ class Feeds:
 
     async def async_send_room(self, always: bool = False) -> None:
         """The room's reading, if the Nest can regulate from it; else a
-        repair saying how it can."""
+        repair saying how it can. Nothing while it isn't a thermostat."""
+        if not acts_as_thermostat(self.hass, self.serial):
+            ir.async_delete_issue(self.hass, DOMAIN, self.issue)
+            return
         if not regulates_from_a_sensor(self.hass, self.serial):
             # With the Nest's switch, the repair turns the option on; an older
             # build says how instead.

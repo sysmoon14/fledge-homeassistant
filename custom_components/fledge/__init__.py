@@ -35,7 +35,7 @@ from homeassistant.util import dt as dt_util
 from . import art, cards, panel, schedule
 from .feeds import Feeds
 from .config_flow import thermostats
-from .const import (ALARM_RESULT_TOPIC, CONF_ALARMS, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -288,7 +288,7 @@ class Thermostat:
         """A repair to make while the thermostat's build is older than this
         integration needs."""
         issue = f"outdated_{self.serial}"
-        if self.protocol is not None and self.protocol >= needs(self.entities):
+        if self.protocol is not None and self.protocol >= needs(self.entities, self.entry.options.get(CONF_SHOW_THERMOSTAT, True)):
             ir.async_delete_issue(self.hass, DOMAIN, issue)
         else:
             ir.async_create_issue(self.hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING,
@@ -329,6 +329,8 @@ class Thermostat:
         shown["presence"] = {"far": far, "near": near}
         shown["card_idle"] = idle
         shown["dim_off"] = options.get(CONF_DIM_OFF, True)
+        if options.get(CONF_SHOW_THERMOSTAT, True) is False:
+            shown["show_thermostat"] = False
         name = self.thermostat_name()
         if name:
             shown["thermostat_name"] = name
@@ -422,7 +424,7 @@ class Thermostat:
         except (TypeError, ValueError):
             return
         allowed = [*self.entities, *self._members()]
-        call = cards.command(payload, allowed) if isinstance(payload, dict) else None
+        call = cards.command(payload, allowed, self.hass.states.get) if isinstance(payload, dict) else None
         if call is None:
             _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", cards.redacted(payload))
             return

@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+from .const import (CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
                     CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
                     NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
@@ -59,6 +59,7 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
         vol.Required(CONF_CARD_IDLE, default=idle): selector.NumberSelector(selector.NumberSelectorConfig(
             min=5, max=600, step=1, unit_of_measurement="s", mode=selector.NumberSelectorMode.BOX)),
         vol.Required(CONF_DIM_OFF, default=current.get(CONF_DIM_OFF, True)): selector.BooleanSelector(),
+        vol.Required(CONF_SHOW_THERMOSTAT, default=current.get(CONF_SHOW_THERMOSTAT, True)): selector.BooleanSelector(),
         vol.Optional(CONF_WEATHER, description={"suggested_value": current.get(CONF_WEATHER)}):
             selector.EntitySelector(selector.EntitySelectorConfig(domain="weather")),
         vol.Optional(CONF_OUTDOOR, description={"suggested_value": current.get(CONF_OUTDOOR)}): thermometer,
@@ -83,6 +84,8 @@ def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None
         options[CONF_CARD_IDLE] = max(5, min(600, int(idle)))
     if user_input.get(CONF_DIM_OFF) is False:
         options[CONF_DIM_OFF] = False
+    if user_input.get(CONF_SHOW_THERMOSTAT) is False:
+        options[CONF_SHOW_THERMOSTAT] = False
     for key in (CONF_WEATHER, CONF_OUTDOOR, CONF_ROOM_SENSOR):
         if user_input.get(key):
             options[key] = user_input[key]

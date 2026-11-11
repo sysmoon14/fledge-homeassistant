@@ -6,6 +6,7 @@ model.rs); a command is what it sends on <base>/ui/command:
 
     {"id": "light.x", "action": "on" | "off" | "brightness" | "color_temp" | "hue"
                                 | "temperature" | "volume" | "play_pause", "value": <number>}
+    {"id": "climate.x", "action": "preset" | "hvac_mode" | "fan_mode", "option": "cool"}
     {"id": "alarm_control_panel.x", "action": "arm", "mode": "away", "code": "1234", "force": false}
     {"id": "alarm_control_panel.x", "action": "disarm", "code": "1234"}
 """
@@ -13,7 +14,7 @@ model.rs); a command is what it sends on <base>/ui/command:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .const import CHOICES, RUN, SWITCHED
 
@@ -88,8 +89,29 @@ def _seconds(value: Any) -> float | None:
     return None
 
 
+def _range_end(state: State) -> str | None:
+    """Which end of a heat_cool range the ring sets: "low" while it heats,
+    "high" while it cools, else the end nearer the temperature now (low if
+    it doesn't know). None when it has no range."""
+    attributes = state.attributes
+    low, high = attributes.get("target_temp_low"), attributes.get("target_temp_high")
+    if attributes.get("temperature") is not None or low is None or high is None:
+        return None
+    action = attributes.get("hvac_action")
+    if action == "heating":
+        return "low"
+    if action == "cooling":
+        return "high"
+    now = attributes.get("current_temperature")
+    if isinstance(now, (int, float)) and abs(now - high) < abs(now - low):
+        return "high"
+    return "low"
+
+
 def climate(state: State) -> dict[str, Any]:
     attributes = state.attributes
+    end = _range_end(state)
+    target = attributes.get(f"target_temp_{end}") if end else attributes.get("temperature")
     return {
         "kind": "climate",
         "id": state.entity_id,
@@ -97,14 +119,35 @@ def climate(state: State) -> dict[str, Any]:
         "icon": attributes.get("icon") or "",
         "mode": state.state,
         "action": attributes.get("hvac_action") or "",
-        "target": attributes.get("temperature"),
+        "target": target,
         "current": attributes.get("current_temperature"),
         "min": attributes.get("min_temp") or 7,
         "max": attributes.get("max_temp") or 30,
         "step": attributes.get("target_temp_step") or 0.5,
         "presets": [p for p in attributes.get("preset_modes") or [] if p != "none"][:4],
         "preset": attributes.get("preset_mode"),
+        # Its modes (heat, cool, dry, fan_only, off, ...) and fan speeds, for
+        # its menu (protocol 10 ignores them).
+        "modes": list(attributes.get("hvac_modes") or []),
+        "fan_modes": list(attributes.get("fan_modes") or []),
+        "fan_mode": attributes.get("fan_mode"),
     }
+
+
+def _temperature(state: State | None, value: float) -> dict[str, Any]:
+    """set_temperature's data for `value` from the ring: its target, or in a
+    heat_cool range the end its card shows, the other end kept clear of it."""
+    end = _range_end(state) if state is not None else None
+    if end is None:
+        return {"temperature": value}
+    attributes = state.attributes
+    low, high = float(attributes["target_temp_low"]), float(attributes["target_temp_high"])
+    gap = float(attributes.get("target_temp_step") or 0.5)
+    if end == "low":
+        low, high = value, max(high, value + gap)
+    else:
+        low, high = min(low, value - gap), value
+    return {"target_temp_low": low, "target_temp_high": high}
 
 
 def media(state: State) -> dict[str, Any]:
@@ -291,10 +334,12 @@ class Call:
     data: dict[str, Any]
 
 
-def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
+def command(payload: Mapping[str, Any], entities: Sequence[str],
+            get: Callable[[str], State | None] = lambda _: None) -> Call | None:
     """What a command from the thermostat does, or None if it isn't one it
     may give: only the chosen entities (a chosen group's own lights among
-    them), only the ways each kind allows."""
+    them), only the ways each kind allows. `get`: an entity's state, for
+    what it allows of itself (a climate's modes, its heat_cool range)."""
     entity = payload.get("id")
     what = payload.get("action")
     # A notification's answer: its tag, not an entity, for an event.
@@ -323,7 +368,7 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
     if domain == "camera" and what == "snapshot":
         return Call("fledge", "snapshot", entity, {})
     if domain == "climate" and what == "temperature" and 5 <= value <= 35:
-        return Call("climate", "set_temperature", entity, {"temperature": value})
+        return Call("climate", "set_temperature", entity, _temperature(get(entity), value))
     if domain == "media_player":
         if what == "volume" and 0 <= value <= 100:
             return Call("media_player", "volume_set", entity, {"volume_level": value / 100})
@@ -335,6 +380,12 @@ def command(payload: Mapping[str, Any], entities: Sequence[str]) -> Call | None:
     named = isinstance(option, str) and 0 < len(option) <= 64
     if domain == "climate" and what == "preset" and named:
         return Call("climate", "set_preset_mode", entity, {"preset_mode": option})
+    if domain == "climate" and what in ("hvac_mode", "fan_mode") and named:
+        state = get(entity)
+        listed = (state.attributes.get(f"{what}s") or []) if state is not None else []
+        if option in listed:
+            return Call("climate", f"set_{what}", entity, {what: option})
+        return None
     if domain in CHOICES and what == "select" and named:
         return Call(domain, "select_option", entity, {"option": option})
     if domain == "alarm_control_panel" and what in ("arm", "disarm"):

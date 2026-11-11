@@ -141,6 +141,36 @@ def test_options_covers_presets_and_groups():
     assert command({"id": "cover.blind", "action": "position", "value": 300}) is None
 
 
+def test_an_air_conditioner_s_modes_fan_speeds_and_range():
+    ac = State("climate.ac", "cool", hvac_modes=["off", "cool", "heat", "dry", "fan_only", "heat_cool"],
+               fan_modes=["auto", "low", "high"], fan_mode="auto", temperature=22, preset_modes=["away", "boost"])
+    card = cards.climate(ac)
+    assert (card["modes"], card["fan_modes"], card["fan_mode"], card["target"]) == \
+        (["off", "cool", "heat", "dry", "fan_only", "heat_cool"], ["auto", "low", "high"], "auto", 22)
+    states = {"climate.ac": ac}
+    command = lambda payload: cards.command(payload, ["climate.ac"], states.get)
+    assert command({"id": "climate.ac", "action": "hvac_mode", "option": "dry"}) == \
+        cards.Call("climate", "set_hvac_mode", "climate.ac", {"hvac_mode": "dry"})
+    assert command({"id": "climate.ac", "action": "fan_mode", "option": "high"}).data == {"fan_mode": "high"}
+    assert command({"id": "climate.ac", "action": "fan_mode", "option": "turbo"}) is None, "only its own speeds"
+    assert command({"id": "climate.ac", "action": "hvac_mode", "option": "auto"}) is None, "only its own modes"
+    assert cards.command({"id": "climate.ac", "action": "fan_mode", "option": "low"}, ["climate.ac"]) is None, \
+        "not without its state"
+    assert command({"id": "climate.ac", "action": "temperature", "value": 21}).data == {"temperature": 21}
+
+    # heat_cool: the end it's working towards, the other kept clear of it.
+    ranged = lambda action, now=None: State("climate.ac", "heat_cool", target_temp_low=19, target_temp_high=24,
+                                            target_temp_step=1, hvac_action=action, current_temperature=now)
+    assert cards.climate(ranged("cooling"))["target"] == 24 and cards.climate(ranged("heating"))["target"] == 19
+    assert cards.climate(ranged("idle", 23))["target"] == 24, "idle: the nearer end"
+    states["climate.ac"] = ranged("cooling")
+    assert command({"id": "climate.ac", "action": "temperature", "value": 18}).data == \
+        {"target_temp_low": 17, "target_temp_high": 18}
+    states["climate.ac"] = ranged("heating")
+    assert command({"id": "climate.ac", "action": "temperature", "value": 20}).data == \
+        {"target_temp_low": 20, "target_temp_high": 24}
+
+
 def test_the_glance_has_the_time_zone_and_the_weather():
     weather = State("weather.home", "partlycloudy", temperature=8.4, temperature_unit="°C")
     assert cards.glance(weather, 3600.4) == {"offset": 3600, "weather": {"condition": "partlycloudy",
@@ -863,6 +893,45 @@ async def test_a_room_thermometer_reaches_a_nest_that_can_use_it(hass: HomeAssis
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert issues.async_get_issue(DOMAIN, f"room_sensor_{SERIAL}") is None
+
+
+async def test_a_nest_that_isn_t_a_thermostat_has_no_room_thermometer_repair(hass: HomeAssistant, mqtt_mock) -> None:
+    thermostat = _thermostat(hass)
+    role = _source(hass, thermostat, "switch", "act_as_thermostat", "nest_thermostat_act_as_a_thermostat")
+    hass.states.async_set(role, "off")
+    hass.states.async_set("sensor.lounge", "21", {"unit_of_measurement": "°C", "device_class": "temperature"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser", "room_sensor": "sensor.lounge"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"room_sensor_{SERIAL}") is None, "it doesn't regulate at all"
+    hass.states.async_set(role, "on")
+    hass.states.async_set("sensor.lounge", "21.5", {"unit_of_measurement": "°C", "device_class": "temperature"})
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"room_sensor_{SERIAL}"), "a thermostat again: the usual repair"
+
+
+def test_hiding_the_thermostat_s_card_needs_a_build_that_can():
+    from custom_components.fledge.const import needs
+    assert needs(["light.a"]) == 6 and needs(["alarm_control_panel.a"]) == 9
+    assert needs(["light.a"], False) == 10 and needs(["alarm_control_panel.a"], False) == 10
+    from custom_components.fledge.config_flow import options_from
+    assert "show_thermostat" not in options_from({"entities": [], "show_thermostat": True})
+    assert options_from({"entities": [], "show_thermostat": False})["show_thermostat"] is False
+
+
+async def test_the_thermostat_s_card_can_be_hidden(hass: HomeAssistant, mqtt_mock) -> None:
+    hass.states.async_set("light.lamp", "on", {"friendly_name": "Lamp"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": ["light.lamp"], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "show_thermostat" not in json.loads(_published(mqtt_mock)[-1][1]), "shown, as before"
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "show_thermostat": False})
+    await hass.async_block_till_done()
+    assert json.loads(_published(mqtt_mock)[-1][1])["show_thermostat"] is False
 
 
 async def test_heating_and_hot_water_hours_today(hass: HomeAssistant, mqtt_mock, freezer) -> None:

@@ -558,6 +558,7 @@ class FledgePanel extends HTMLElement {
     this._tab = "cards";
     this._preview = { cards: {}, thermostat: null };
     this._adding = false;
+    this._roleAsk = false;
     this._query = "";
     this._busy = false;
     this._error = "";
@@ -661,6 +662,7 @@ class FledgePanel extends HTMLElement {
       near: options.near || "wake",
       card_idle: options.card_idle || 20,
       dim_off: options.dim_off !== false,
+      show_thermostat: options.show_thermostat !== false,
       weather: options.weather || null,
       outdoor_temperature: options.outdoor_temperature || null,
       room_sensor: options.room_sensor || null,
@@ -671,6 +673,17 @@ class FledgePanel extends HTMLElement {
     this._saved = this._fingerprint(this._draft);
     if (!keepSelection) this._sel = order.indexOf(THERMO);
     this._sel = Math.max(0, Math.min(this._sel, order.length - 1));
+  }
+
+  // Whether the Nest acts as a thermostat: unless its switch is off.
+  _acting() {
+    const id = this._current?.role_switch;
+    return !id || this._hass.states[id]?.state !== "off";
+  }
+
+  // Whether the Nest shows its own card: it acts as a thermostat and it isn't hidden.
+  _thermoShown() {
+    return this._acting() && this._draft.show_thermostat;
   }
 
   _entities(draft = this._draft) {
@@ -725,7 +738,7 @@ class FledgePanel extends HTMLElement {
       await this._hass.callWS({
         type: "fledge/save", entry_id: t.entry_id, entities, wake: d.wake, thermostat: this._place(),
         wake_device: entities.includes(d.wake_device) ? d.wake_device : null, glance: d.far === "glance",
-        far: d.far, near: d.near, card_idle: d.card_idle, dim_off: d.dim_off,
+        far: d.far, near: d.near, card_idle: d.card_idle, dim_off: d.dim_off, show_thermostat: d.show_thermostat,
         weather: d.weather || null, outdoor_temperature: d.outdoor_temperature || null,
         room_sensor: d.room_sensor || null, names: Object.fromEntries(Object.entries(d.names).filter(([, v]) => v.trim())),
         alarms: Object.fromEntries(Object.entries(d.alarms).filter(([k]) => entities.includes(k)).map(([k, v]) => [k, {
@@ -828,7 +841,8 @@ class FledgePanel extends HTMLElement {
     const id = this._draft.order[sel];
     if (id === THERMO) {
       const nest = this._nest();
-      if (nest) FACES.nest(f, nest);
+      if (!this._thermoShown()) FACES.missing(f, this._thermostatName(), this._acting() ? "Hidden: not on the Nest" : "Not a thermostat: no card");
+      else if (nest) FACES.nest(f, nest);
       else FACES.missing(f, this._thermostatName(), "Not reporting");
       return f.html();
     }
@@ -857,7 +871,7 @@ class FledgePanel extends HTMLElement {
     else body = this._tabs() + this._banner() + this._tabBody();
     const scroll = this.shadowRoot.querySelector(".content")?.scrollTop || 0;
     const focus = this._focusKey();
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style>${this._toolbar()}<div class="content">${body}</div>${this._saveBar()}${this._adding ? this._addDialog() : ""}`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style>${this._toolbar()}<div class="content">${body}</div>${this._saveBar()}${this._adding ? this._addDialog() : ""}${this._roleAsk ? this._roleDialog() : ""}`;
     const content = this.shadowRoot.querySelector(".content");
     if (content) content.scrollTop = scroll;
     this._wirePickers();
@@ -969,8 +983,10 @@ class FledgePanel extends HTMLElement {
     const missing = !mine && !state;
     const unavailable = state?.state === "unavailable";
     const badge = missing ? `<span class="chip bad">Not found</span>` : unavailable ? `<span class="chip">Unavailable</span>`
+      : mine && !this._acting() ? `<span class="chip warm">Not a thermostat</span>`
+      : mine && !this._draft.show_thermostat ? `<span class="chip">Hidden</span>`
       : mine ? `<span class="chip">This Nest</span>` : this._draft.wake_device === id ? `<span class="chip warm">Wakes here</span>` : "";
-    return `<div class="row ${i === this._sel ? "sel" : ""}" data-row="${i}" draggable="true">
+    return `<div class="row ${i === this._sel ? "sel" : ""} ${mine && !this._thermoShown() ? "off" : ""}" data-row="${i}" draggable="true">
       <span class="grip" aria-hidden="true"><ha-icon icon="mdi:drag-vertical"></ha-icon></span>
       <button class="pickrow" data-act="select" data-i="${i}" aria-label="${esc(this._name(id))}" aria-current="${i === this._sel}">
         <span class="ico ${active ? "active" : ""}"><ha-icon icon="${esc(this._icon(id))}"></ha-icon></span>
@@ -1012,9 +1028,12 @@ class FledgePanel extends HTMLElement {
       return `<section class="card detail" aria-label="Selected card">
         <div class="who"><span class="ico big active"><ha-icon icon="mdi:thermostat"></ha-icon></span>
           <span class="text"><span class="name big">${esc(this._thermostatName())}</span><span class="sub">This Nest's own card</span></span></div>
+        ${this._acting()
+          ? `<div class="kv"><span>Show on the Nest<span class="sub">${this._draft.show_thermostat ? "Turn it to set the temperature, as the Nest always did" : "Hidden: the Nest still heats, set from Home Assistant"}</span></span>${this._switch("showthermo", this._draft.show_thermostat, "Show on the Nest")}</div>`
+          : `<div class="banner warn inline">This Nest isn't acting as a thermostat, so it has no card of its own. Turn it back on in the Thermostat tab.</div>`}
         ${this._nameField("cardname")}
-        <div><div class="muted small">On the ring</div>
-          ${THERMOSTAT_RING.map(([k, v]) => `<div class="kv"><span class="muted">${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>
+        ${this._acting() ? `<div><div class="muted small">On the ring</div>
+          ${THERMOSTAT_RING.map(([k, v]) => `<div class="kv"><span class="muted">${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>` : ""}
         ${old ? `<div class="banner warn inline">The Nest's Fledge build keeps it first until it updates (Thermostat tab).</div>` : ""}
         <div class="actions">${this._moves()}
           ${t.climate ? `<button class="btn ghost" data-act="more" data-id="${esc(t.climate)}">Open</button>` : ""}</div>
@@ -1162,7 +1181,7 @@ class FledgePanel extends HTMLElement {
       </section>
       <section class="card pad">
         <h2>Someone across the room</h2>
-        <p class="muted small">The Nest lights up as it sees someone across the room. Keep its Farsight on: that's how it sees them.</p>
+        <p class="muted small">Fledge keeps the Nest's Farsight on, so its motion sensor always reports at once. Stay dark keeps the screen fully dark.</p>
         ${FARS.map(([k, label, sub]) => this._presence("far", k, label, sub)).join("")}
         <h2>Someone comes up to it</h2>
         <p class="muted small">Close enough to reach it, without touching it.</p>
@@ -1229,8 +1248,68 @@ class FledgePanel extends HTMLElement {
           <a class="btn ghost" href="/config/integrations/integration/fledge" data-act="nav" data-href="/config/integrations/integration/fledge">Integration</a>
         </div>
       </section>
+      ${this._role()}
       ${this._temperatures()}
     </div>`;
+  }
+
+  // Whether the Nest is a thermostat at all, or a panel on the wall with its
+  // heating off.
+  _role() {
+    const t = this._current;
+    const id = t.role_switch;
+    const acting = this._acting();
+    const body = !id
+      ? `<p class="muted small">Update Fledge on the Nest to use it only as a panel, without its thermostat.</p>`
+      : acting
+        ? `<p class="muted small">Using something else for your heating? Turn this off to keep the Nest as a panel for your cards. Its heating ${this._hotWater() ? "and hot water switch" : "switches"} off, and it stops being a thermostat in Home Assistant.</p>`
+        : `<div class="banner warn inline"><span><b>Not a thermostat.</b> Its heating is off (its hot water too, if it has it), and Home Assistant has only its sensors. Turn this back on to heat again as before.</span></div>`;
+    return `<section class="card pad">
+        <h2>Thermostat</h2>
+        ${id ? `<div class="kv"><span>Act as a thermostat<span class="sub">${acting ? "On: it controls your heating" : "Off: heating off, panel only"}</span></span>${this._switch("role", acting, "Act as a thermostat")}</div>` : ""}
+        ${body}
+        ${this._wwn()}
+      </section>`;
+  }
+
+  // A Heat Link model heating without its Heat Link (nestlocal's
+  // using_wwn_boiler), switched with a reboot.
+  _wwn() {
+    const id = this._current.wwn_switch;
+    if (!id) return "";
+    const on = this._hass.states[id]?.state === "on";
+    return `<div class="kv"><span>Works With Nest boiler<span class="sub">${on ? "On: heats through its own W1 wire, no Heat Link" : "Off: heats through its Heat Link"}</span></span>${this._switch("wwn", on, "Works With Nest boiler")}</div>
+      <p class="muted small">For a Nest with no Heat Link, or a boiler wired straight to the Nest's own base. Without it, a Nest that can't find its Heat Link can stop with error H71 or H74. Changing it reboots the Nest.</p>`;
+  }
+
+  _hotWater() {
+    return (this._current.own || []).some((e) => e.endsWith("_hot_water_schedule") || e.endsWith("_hot_water"));
+  }
+
+  // What turning the switch does, said before it does it.
+  _roleDialog() {
+    const off = this._acting();
+    const water = this._hotWater();
+    const name = esc(this._thermostatName());
+    const items = off ? [
+      `Its heating${water ? " and hot water turn" : " turns"} <b>off</b> now, and nothing can turn ${water ? "them" : "it"} back on while it's off. Its safety temperatures still protect against frost.`,
+      "Home Assistant loses its thermostat: the climate entity, schedules, Eco, Auto-Schedule, Home/Away and the other heating controls. Automations and dashboards that use them stop working.",
+      "Its card and heating settings go from the Nest's screen. Your other cards stay.",
+      "Its temperature and humidity sensors stay, with its motion, light and power sensors.",
+    ] : [
+      "Its heating goes back to the mode it was in (its hot water schedule too, if it had one), and it heats again if that calls for it.",
+      "Home Assistant gets its thermostat and heating controls back, with the same entity IDs.",
+      "Its card and heating settings come back on the Nest's screen.",
+    ];
+    return `<div class="scrim" data-act="closerole"></div>
+      <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="roletitle">
+        <div class="head"><h2 id="roletitle">${off ? `Stop ${name} acting as a thermostat?` : `Make ${name} a thermostat again?`}</h2>
+          <button class="icon" data-act="closerole" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <ul class="role">${items.map((i) => `<li>${i}</li>`).join("")}</ul>
+        <div class="actions"><span class="grow"></span>
+          <button class="btn text" data-act="closerole">Cancel</button>
+          <button class="btn solid ${off ? "danger" : ""}" data-act="roleconfirm">${off ? "Turn heating off" : "Turn heating back on"}</button></div>
+      </div>`;
   }
 
   // The weather the Nest shows (its own screen and the glance), and a room
@@ -1344,6 +1423,17 @@ class FledgePanel extends HTMLElement {
       case "menu": this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })); return;
       case "wakenow": this._hass.callService("button", "press", { entity_id: this._current.entities.wake_screen }); return;
       case "dimoff": this._draft.dim_off = !this._draft.dim_off; this._render(); return;
+      case "showthermo": this._draft.show_thermostat = !this._draft.show_thermostat; this._render(); return;
+      case "role": this._roleAsk = true; this._render(); this.shadowRoot.querySelector('[data-act="roleconfirm"]')?.focus(); return;
+      case "closerole": this._roleAsk = false; break;
+      case "roleconfirm": {
+        const off = this._acting();
+        this._roleAsk = false;
+        this._hass.callService("switch", off ? "turn_off" : "turn_on", { entity_id: this._current.role_switch })
+          .then(() => this._flash(off ? "The Nest's heating is off: it's a panel now." : "The Nest is a thermostat again."),
+            (err) => { this._error = err?.message || String(err); this._render(); });
+        break;
+      }
       case "alarmshow": {
         const id = d.order[this._sel];
         const settings = (d.alarms[id] ||= {});
@@ -1360,6 +1450,17 @@ class FledgePanel extends HTMLElement {
         break;
       }
       case "keepon": this._hass.callService("switch", "toggle", { entity_id: this._current.entities.keep_screen_on }); return;
+      case "wwn": {
+        const id = this._current.wwn_switch;
+        const on = this._hass.states[id]?.state === "on";
+        const ask = on
+          ? "Turn Works With Nest boiler off?\n\nThe Nest goes back to heating through its Heat Link. If it has no Heat Link it may stop with error H71 or H74.\n\nThe Nest reboots now, and its heating pauses for about a minute."
+          : "Turn Works With Nest boiler on?\n\nThe Nest stops using its Heat Link and switches the boiler itself, through the W1 wire on its own base. Only do this if the Nest has no Heat Link, or the boiler is wired to the Nest's base: a boiler wired to a Heat Link won't come on.\n\nThe Nest reboots now, and its heating pauses for about a minute.";
+        if (!confirm(ask)) return;
+        this._hass.callService("switch", on ? "turn_off" : "turn_on", { entity_id: id })
+          .then(() => this._flash("The Nest is rebooting into it."), (err) => { this._error = err?.message || String(err); this._render(); });
+        return;
+      }
       case "extoption": {
         const id = this._current.room_sensor_switch;
         const on = this._hass.states[id]?.state === "on";
@@ -1470,8 +1571,9 @@ class FledgePanel extends HTMLElement {
   }
 
   _key(e) {
-    if (e.key === "Escape" && this._adding) {
+    if (e.key === "Escape" && (this._adding || this._roleAsk)) {
       this._adding = false;
+      this._roleAsk = false;
       this._render();
       return;
     }
@@ -1672,6 +1774,9 @@ pre{margin:0;background:var(--code-editor-background-color,rgba(127,127,127,.1))
 .scrim{position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:4}
 .dialog{position:absolute;left:50%;top:72px;transform:translateX(-50%);width:min(520px,calc(100% - 32px));max-height:calc(100% - 120px);display:flex;flex-direction:column;gap:12px;background:var(--fl-card);border-radius:16px;padding:16px;z-index:5;box-shadow:0 12px 40px rgba(0,0,0,.5)}
 .dialog .head{padding:0}
+.dialog ul.role{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.45}
+.btn.solid.danger{background:var(--error-color,#db4437)}
+.row.off .ico,.row.off .name{opacity:.5}
 .results{overflow:auto;display:flex;flex-direction:column;gap:2px;min-height:120px}
 @media (max-width:600px){.deck,.cols{padding:12px;gap:16px}.list,.detail{max-width:none}.ring .small{width:110px}}
 `;

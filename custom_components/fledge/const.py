@@ -41,6 +41,9 @@ CONF_NAMES = "names"
 CONF_ALARMS = "alarms"
 # Where the thermostat's own card goes among them: before entities[n] (0, first).
 CONF_THERMOSTAT = "thermostat"
+# Whether the thermostat has its own card at all (protocol 10; shown unless
+# set False): hidden, the Nest still heats, set from Home Assistant.
+CONF_SHOW_THERMOSTAT = "show_thermostat"
 # Before 0.4.4: rooms' lights, less some, then thermostats and media players.
 CONF_AREAS = "areas"
 CONF_EXCLUDE = "exclude"
@@ -69,10 +72,15 @@ PROTOCOL_TOPIC = "{prefix}/{serial}/ui/protocol"
 # alarm among the cards, the build that has them.
 PROTOCOL = 6
 PROTOCOL_ALARM = 9
+# Its own card hidden, and its Act as a thermostat switch.
+PROTOCOL_ROLE = 10
 
 
-def needs(entities) -> int:
-    """The protocol a thermostat's build needs for these cards."""
+def needs(entities, show_thermostat: bool = True) -> int:
+    """The protocol a thermostat's build needs for these cards, and for its
+    own card hidden."""
+    if not show_thermostat:
+        return PROTOCOL_ROLE
     alarm = any(str(e).startswith("alarm_control_panel.") for e in entities or [])
     return PROTOCOL_ALARM if alarm else PROTOCOL
 # Asks the thermostat to look for its own update now (its button's command).
