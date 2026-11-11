@@ -11,7 +11,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+from . import faces
+from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
                     CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
                     NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
@@ -50,8 +51,10 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
     thermometer = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class="temperature"))
     choose = lambda key, options: selector.SelectSelector(selector.SelectSelectorConfig(  # noqa: E731
         options=options, translation_key=key, mode=selector.SelectSelectorMode.LIST))
+    # Glance faces aren't entities to pick: the panel's (kept by the options flow).
+    picked = [e for e in current.get(CONF_ENTITIES, []) if not faces.is_face(e)]
     return vol.Schema({
-        vol.Optional(CONF_ENTITIES, description={"suggested_value": current.get(CONF_ENTITIES, [])}): devices,
+        vol.Optional(CONF_ENTITIES, description={"suggested_value": picked}): devices,
         vol.Required(CONF_WAKE, default=current.get(CONF_WAKE, WAKE_CHOOSER)): wake,
         vol.Optional(CONF_WAKE_DEVICE, description={"suggested_value": current.get(CONF_WAKE_DEVICE)}): device,
         vol.Required(CONF_FAR, default=far): choose(CONF_FAR, [FAR_GLANCE, FAR_WAKE, FAR_DARK]),
@@ -98,7 +101,20 @@ def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None
     alarms = {k: v for k, v in (alarms or {}).items() if k in options[CONF_ENTITIES] and v}
     if alarms:
         options[CONF_ALARMS] = alarms
+    kept = {k: v for k, v in (user_input.get(CONF_FACES) or {}).items() if k in options[CONF_ENTITIES]}
+    if kept:
+        options[CONF_FACES] = kept
     return options
+
+
+def with_faces(picked: list[str], before: list[str]) -> list[str]:
+    """The devices picked in the options flow, with the glance faces that
+    were among the cards back where they were."""
+    out = [e for e in picked if not faces.is_face(e)]
+    for place, entity in enumerate(before):
+        if faces.is_face(entity):
+            out.insert(min(place, len(out)), entity)
+    return out
 
 
 def _title(hass: HomeAssistant, serial: str) -> str:
@@ -169,10 +185,13 @@ class FledgeOptionsFlow(OptionsFlow):
             names = self.config_entry.options.get(CONF_NAMES)
             place = self.config_entry.options.get(CONF_THERMOSTAT)
             alarms = self.config_entry.options.get(CONF_ALARMS)
-            # The glance's settings are the panel's too.
+            # The glance's settings are the panel's too, and its faces.
             glance = self.config_entry.options.get(CONF_GLANCE_SETTINGS)
-            return self.async_create_entry(data=options_from({**user_input, CONF_THERMOSTAT: place,
-                                                              CONF_GLANCE_SETTINGS: glance}, names, alarms))
+            before = list(self.config_entry.options.get(CONF_ENTITIES, []))
+            entities = with_faces(list(user_input.get(CONF_ENTITIES) or []), before)
+            return self.async_create_entry(data=options_from({**user_input, CONF_ENTITIES: entities, CONF_THERMOSTAT: place,
+                                                              CONF_GLANCE_SETTINGS: glance,
+                                                              CONF_FACES: self.config_entry.options.get(CONF_FACES)}, names, alarms))
         serial = self.config_entry.data[CONF_SERIAL]
         return self.async_show_form(step_id="init",
                                     data_schema=_cards_schema(self.hass, serial, dict(self.config_entry.options)))

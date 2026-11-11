@@ -9,8 +9,8 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import glance
-from .const import (CONF_GLANCE_SETTINGS, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_WAKE, CONF_WAKE_DEVICE, FAR_DARK,
+from . import faces, glance
+from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_WAKE, CONF_WAKE_DEVICE, FAR_DARK,
                     FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT,
                     presence)
 from .entity import FledgeEntity
@@ -35,6 +35,10 @@ class WakeTo(FledgeEntity, SelectEntity):
         names: dict[str, str] = {}
         renamed = self.entry.options.get(CONF_NAMES, {})
         for entity_id in self.entry.options.get(CONF_ENTITIES, []):
+            if faces.is_face(entity_id):
+                face = faces.settings((self.entry.options.get(CONF_FACES) or {}).get(entity_id))
+                names.setdefault(faces.name(face, renamed.get(entity_id)), entity_id)
+                continue
             state = self.hass.states.get(entity_id)
             name = renamed.get(entity_id) or (state.attributes.get("friendly_name") if state else None) or entity_id
             names.setdefault(name, entity_id)

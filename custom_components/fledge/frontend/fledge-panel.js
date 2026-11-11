@@ -101,6 +101,19 @@ const GLANCE_CAN_BE_EMPTY = ["playing", "calendar", "entity", "template", "rain"
 const GLANCE_WHENS = [["always", "Always"], ["on", "Only while it's on"], ["off", "Only while it's off"], ["is", "Only while it is…"],
   ["is_not", "Only while it isn't…"], ["above", "Only above…"], ["below", "Only below…"]];
 
+// Glance faces as cards (faces.py): their ids in the cards' order, what
+// they're called until named, their icons, and what their actions can be.
+const FACE = "fledge_face.";
+const isFace = (id) => typeof id === "string" && id.startsWith(FACE);
+const FACE_NAMES = { clock: "Clock", temp: "Temperature", weather: "Weather", analog: "Clock", number: "Number", agenda: "Up next" };
+const FACE_ICONS = { clock: "mdi:clock-outline", temp: "mdi:thermometer", weather: "mdi:weather-partly-cloudy",
+  analog: "mdi:clock-time-four-outline", number: "mdi:numeric", agenda: "mdi:calendar" };
+const FACE_ACTIONS = "light,switch,fan,input_boolean,scene,script,button,input_button";
+const FACE_MAX_ACTIONS = 4;
+// The card protocol that has faces (nestlocal ui::PROTOCOL).
+const FACES_PROTOCOL = 13;
+const newFaceId = () => FACE + Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(16).padStart(2, "0")).join("");
+
 // The date's words in `language`, as the browser names them: days from
 // Sunday, months as they read after a day's number; null where they aren't
 // in the Latin alphabet, which is all the Nest's fonts draw.
@@ -816,6 +829,8 @@ class FledgePanel extends HTMLElement {
     // what Home Assistant would send now (fledge/glance_preview).
     this._gview = { night: false, far: false };
     this._gpreview = null;
+    // The face card being designed on the Glance tab (its id), else the glance.
+    this._gface = null;
     this._note = { title: "Washing's done", message: "The washing machine has finished.", camera: "", timeout: 30 };
     this._seen = {};
     this._drag = null;
@@ -846,9 +861,9 @@ class FledgePanel extends HTMLElement {
       this._gat = Date.now();
       this._glanceSoon();
     }
-    // Only what the panel shows: the cards' devices, and the Nest's own.
+    // Only what the panel shows: the cards' devices (a face's actions), and the Nest's own.
     const t = this._current;
-    const cards = [...this._entities(), t.climate].filter(Boolean);
+    const cards = [...this._entities().filter((id) => !isFace(id)), ...this._faceActions(), t.climate].filter(Boolean);
     if (cards.some((id) => hass.states[id] !== this._seen[id])) {
       this._refreshSoon();
       return;
@@ -929,7 +944,9 @@ class FledgePanel extends HTMLElement {
       device_name: t?.name_by_user || "",
       glance: JSON.parse(JSON.stringify(t?.glance || { layout: "clock", hours: "auto", ampm: true, lines: {}, colour: true,
         night: { mode: "off", after: 30, before: 0, from: "22:00", until: "07:00", state: "on", layout: "analog", dim: true, lines: {} } })),
+      faces: JSON.parse(JSON.stringify(t?.faces || {})),
     };
+    if (!this._draft.faces[this._gface]) this._gface = null;
     // One calendar, from before there could be several.
     const g = this._draft.glance;
     if (!g.calendars) g.calendars = g.calendar ? [g.calendar] : [];
@@ -963,8 +980,30 @@ class FledgePanel extends HTMLElement {
     const entities = this._entities(draft);
     const names = Object.fromEntries(Object.entries(draft.names).filter(([k, v]) => v.trim() && entities.includes(k)).sort());
     const alarms = Object.fromEntries(Object.entries(draft.alarms || {}).filter(([k]) => entities.includes(k)).sort());
-    return JSON.stringify({ ...draft, device_name: draft.device_name.trim(), names, alarms,
+    return JSON.stringify({ ...draft, device_name: draft.device_name.trim(), names, alarms, faces: this._facesOf(draft),
       wake_device: entities.includes(draft.wake_device) ? draft.wake_device : null });
+  }
+
+  // The faces among the cards, in their order, as saved.
+  _facesOf(draft = this._draft) {
+    return Object.fromEntries(this._entities(draft).filter(isFace).map((id) => {
+      const f = draft.faces[id] || {};
+      return [id, { layout: f.layout || "clock", lines: f.lines || {}, big: f.big || null, big_label: f.big_label || null,
+        colour: f.colour !== false, actions: f.actions || [], hold: (f.actions || []).includes(f.hold) ? f.hold : null }];
+    }));
+  }
+
+  // Every face's actions: entities the panel follows for them.
+  _faceActions() {
+    return [...new Set(Object.values(this._facesOf()).flatMap((f) => f.actions))];
+  }
+
+  // A face's glance settings for the preview and Try on the Nest: its own
+  // layout and lines with the glance's shared settings, and no night.
+  _faceGlance(face) {
+    const g = this._draft.glance;
+    return { ...g, layout: face.layout || "clock", lines: face.lines || {}, big: face.big || null, big_label: face.big_label || null,
+      colour: face.colour !== false, night: { ...g.night, mode: "off" } };
   }
 
   get _dirty() {
@@ -982,12 +1021,15 @@ class FledgePanel extends HTMLElement {
       return;
     }
     const climate = this._current.climate;
+    const d = this._draft;
     try {
-      this._preview = await this._hass.callWS({ type: "fledge/preview", entities: this._entities(), climate: climate || null });
+      this._preview = await this._hass.callWS({ type: "fledge/preview", entities: this._entities(), climate: climate || null,
+        entry_id: this._current.entry_id, faces: this._facesOf(), glance: d.glance, weather: d.weather || null,
+        names: Object.fromEntries(Object.entries(d.names).filter(([k, v]) => isFace(k) && v.trim())) });
     } catch (err) {
       this._error = err?.message || String(err);
     }
-    for (const id of [...this._entities(), climate].filter(Boolean)) this._seen[id] = this._hass.states[id];
+    for (const id of [...this._entities(), ...this._faceActions(), climate].filter(Boolean)) this._seen[id] = this._hass.states[id];
     this._render();
   }
 
@@ -1011,6 +1053,7 @@ class FledgePanel extends HTMLElement {
           hidden: v.hidden || [], code_length: v.code_length || null, takeover: v.takeover !== false,
         }])),
         glance_settings: d.glance,
+        faces: this._facesOf(),
       });
       const name = d.device_name.trim();
       if (t.device_id && name !== (t.name_by_user || "")) {
@@ -1032,6 +1075,7 @@ class FledgePanel extends HTMLElement {
     if (id === THERMO) return this._thermostatName();
     const mine = this._draft.names[id];
     if (mine && mine.trim()) return mine;
+    if (isFace(id)) return FACE_NAMES[this._draft.faces[id]?.layout] || "Glance";
     return this._hass.states[id]?.attributes.friendly_name || id;
   }
 
@@ -1042,6 +1086,7 @@ class FledgePanel extends HTMLElement {
 
   _icon(id) {
     if (id === THERMO) return "mdi:thermostat";
+    if (isFace(id)) return FACE_ICONS[this._draft.faces[id]?.layout] || "mdi:clock-outline";
     return this._hass.states[id]?.attributes.icon || ICONS[domainOf(id)] || "mdi:card-outline";
   }
 
@@ -1114,6 +1159,12 @@ class FledgePanel extends HTMLElement {
     }
     const card = this._card(id);
     const state = this._hass.states[id];
+    if (isFace(id)) {
+      // Drawn as the glance is, from what Home Assistant would send now.
+      if (card?.glance) glanceFace(f, card.glance, (card.said || []).filter((l) => l.text), this._glanceNest(), Date.now() / 1000);
+      else FACES.missing(f, this._name(id), this._current.loaded ? "Drawing…" : "Fledge isn't running");
+      return f.html();
+    }
     if (!card) FACES.missing(f, this._name(id), "Not in Home Assistant, so not on the Nest");
     else if (state?.state === "unavailable") FACES.missing(f, this._name(id), "Unavailable");
     else {
@@ -1246,9 +1297,10 @@ class FledgePanel extends HTMLElement {
   _row(i, id) {
     const t = this._current;
     const mine = id === THERMO;
+    const face = isFace(id);
     const state = this._hass.states[mine ? t.climate : id];
     const active = state && ACTIVE.includes(state.state);
-    const missing = !mine && !state;
+    const missing = !mine && !face && !state;
     const unavailable = state?.state === "unavailable";
     const badge = missing ? `<span class="chip bad">Not found</span>` : unavailable ? `<span class="chip">Unavailable</span>`
       : mine && !this._acting() ? `<span class="chip warm">Not a thermostat</span>`
@@ -1258,7 +1310,7 @@ class FledgePanel extends HTMLElement {
       <span class="grip" aria-hidden="true"><ha-icon icon="mdi:drag-vertical"></ha-icon></span>
       <button class="pickrow" data-act="select" data-i="${i}" aria-label="${esc(this._name(id))}" aria-current="${i === this._sel}">
         <span class="ico ${active ? "active" : ""}"><ha-icon icon="${esc(this._icon(id))}"></ha-icon></span>
-        <span class="text"><span class="name">${esc(this._name(id))}</span><span class="sub">${esc(mine ? "Thermostat" : id)}</span></span>
+        <span class="text"><span class="name">${esc(this._name(id))}</span><span class="sub">${esc(mine ? "Thermostat" : face ? this._faceSaid(id) : id)}</span></span>
         ${badge}
       </button>
     </div>`;
@@ -1307,6 +1359,7 @@ class FledgePanel extends HTMLElement {
           ${t.climate ? `<button class="btn ghost" data-act="more" data-id="${esc(t.climate)}">Open</button>` : ""}</div>
       </section>`;
     }
+    if (isFace(id)) return this._faceDetail(id);
     const domain = domainOf(id);
     const friendly = this._hass.states[id]?.attributes.friendly_name || id;
     const wakes = this._draft.wake_device === id;
@@ -1324,6 +1377,67 @@ class FledgePanel extends HTMLElement {
         <span class="grow"></span>
         <button class="btn text bad" data-act="remove">Remove</button>
       </div>
+    </section>`;
+  }
+
+  // A face card's kind and layout, as its row says.
+  _faceSaid(id) {
+    const layout = this._draft.faces[id]?.layout || "clock";
+    return `Glance face · ${GLANCE_LAYOUTS.find(([k]) => k === layout)?.[1] || "Clock"}`;
+  }
+
+  // A glance face's card: its name, its face (designed on the Glance tab),
+  // its actions round the ring and what a hold does.
+  _faceDetail(id) {
+    const d = this._draft;
+    const face = (d.faces[id] ||= { layout: "clock", lines: {}, colour: true, actions: [] });
+    const actions = face.actions || [];
+    const hold = actions.includes(face.hold) ? face.hold : "";
+    const wakes = d.wake_device === id;
+    const named = (e) => this._hass.states[e]?.attributes.friendly_name || e;
+    // What doing it says: "Runs Movie Night", "Turns Hall Light on or off".
+    const does = (e, what) => (["scene", "script"].includes(domainOf(e)) ? `Runs ${what}`
+      : ["button", "input_button"].includes(domainOf(e)) ? `Presses ${what}` : `Turns ${what} on or off`);
+    const lines = glanceLines(face.lines || {}, face.layout || "clock", false).map((l) => l.source)
+      .filter((s) => s !== "none").map((s) => GLANCE_SOURCES.flatMap(([, items]) => items).find(([k]) => k === s)?.[1] || s);
+    const rows = actions.map((e, i) => `<div class="actrow">
+        <span class="text"><span class="name">${esc(named(e))}</span><span class="sub">${esc(does(e, e))}</span></span>
+        ${e === hold ? `<span class="chip warm">Also on hold</span>` : ""}
+        <button class="icon" data-act="faceactmove" data-i="${i}" data-by="-1" ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(named(e))} earlier"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+        <button class="icon" data-act="faceactmove" data-i="${i}" data-by="1" ${i === actions.length - 1 ? "disabled" : ""} aria-label="Move ${esc(named(e))} later"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+        <button class="icon" data-act="faceactremove" data-i="${i}" aria-label="Remove ${esc(named(e))}"><ha-icon icon="mdi:close"></ha-icon></button>
+      </div>`).join("");
+    const holdOptions = [["", "Nothing"], ...actions.map((e) => [e, named(e)])];
+    const old = this._current.protocol != null && this._current.protocol < FACES_PROTOCOL;
+    return `<section class="card detail" aria-label="Selected card">
+      <div class="who"><span class="ico big"><ha-icon icon="${esc(this._icon(id))}"></ha-icon></span>
+        <span class="text"><span class="name big">${esc(this._name(id))}</span><span class="sub">Glance face · nothing to control</span></span></div>
+      ${old ? `<div class="banner warn inline">The Nest's Fledge build is older than face cards: it leaves this card out until it updates (Thermostat tab).</div>` : ""}
+      <div class="field"><label for="cardname">Name on the Nest</label>
+        <input id="cardname" type="text" maxlength="40" placeholder="${esc(FACE_NAMES[face.layout] || "Clock")}" value="${esc(d.names[id] || "")}" data-input="name"></div>
+      <div class="group">
+        <div class="muted small">Its face</div>
+        <div class="facerow"><span class="thumb"><span class="screen">${this._glanceThumb(face.layout || "clock", false, face)}</span></span>
+          <span class="text"><span class="name">${esc(GLANCE_LAYOUTS.find(([k]) => k === (face.layout || "clock"))?.[1] || "Clock")}</span>
+            <span class="sub wrap">${esc(lines.join(", ") || "No lines")}</span>
+            <span><button class="btn ghost" data-act="faceedit">Design its face</button></span></span></div>
+      </div>
+      <div><div class="muted small">On the ring</div>
+        <div class="kv"><span class="muted">Press</span><span>${actions.length ? "Opens it full screen; press again for its actions" : "Opens it full screen; press again to go back"}</span></div>
+        <div class="kv"><span class="muted">Hold, open</span><span>${hold ? esc(does(hold, named(hold))) : "Nothing"}</span></div>
+        <div class="kv"><span class="muted">Turn</span><span>Nothing, once it's open</span></div></div>
+      <div class="group">
+        <div class="head2"><span class="muted small">Actions on the ring</span><span class="muted small">${actions.length} of ${FACE_MAX_ACTIONS} · after Back</span></div>
+        ${rows || `<p class="muted small">None yet: a scene, script or button to run, or a light or switch to turn on and off.</p>`}
+        ${actions.length < FACE_MAX_ACTIONS ? this._entityField("faceact", FACE_ACTIONS, "Add an action", "") : ""}
+        <div class="field"><label for="facehold">A long press, with the card open</label>
+          <select id="facehold" class="pick wide" data-input="facehold" ${actions.length ? "" : "disabled"}>${holdOptions.map(([v, l]) =>
+            `<option value="${esc(v)}" ${v === hold ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
+        <p class="muted small">Only an action that's on the ring, so a hold never does something the ring doesn't show.</p>
+      </div>
+      <div class="kv"><span>Wake straight to this card</span>${this._switch("wakehere", wakes, "Wake straight to this card")}</div>
+      <div class="actions">${this._moves()}<span class="grow"></span>
+        <button class="btn text bad" data-act="remove">Remove</button></div>
     </section>`;
   }
 
@@ -1468,8 +1582,26 @@ class FledgePanel extends HTMLElement {
   // What's being edited and previewed: the day's glance or the night's.
   _glanceEditing() {
     const g = this._draft.glance;
+    const face = this._editedFace();
+    if (face) {
+      face.lines ||= {};
+      return { night: false, layout: face.layout || "clock", chosen: face.lines, face, own: face };
+    }
     const night = this._gview.night;
-    return { night, layout: night ? g.night.layout : g.layout, chosen: night ? g.night.lines : g.lines };
+    return { night, layout: night ? g.night.layout : g.layout, chosen: night ? g.night.lines : g.lines, face: null, own: g };
+  }
+
+  // The face card being designed, if it's still among the cards.
+  _editedFace() {
+    const id = this._gface;
+    if (!id || !this._entities().includes(id)) return null;
+    return (this._draft.faces[id] ||= { layout: "clock", lines: {}, colour: true, actions: [] });
+  }
+
+  // The glance settings being previewed and tried: the glance's, or a face's.
+  _glanceSent() {
+    const face = this._editedFace();
+    return face ? this._faceGlance(face) : this._draft.glance;
   }
 
   _glanceSoon() {
@@ -1483,10 +1615,12 @@ class FledgePanel extends HTMLElement {
     const t = this._current;
     if (!t?.loaded || !this._draft) return;
     const { night } = this._glanceEditing();
+    const of = this._editedFace() ? this._gface : null;
     let key = this._gkey;
     try {
-      this._gpreview = await this._hass.callWS({ type: "fledge/glance_preview", entry_id: t.entry_id, glance: this._draft.glance,
-        night, weather: this._draft.weather || null, entities: this._entities() });
+      const preview = await this._hass.callWS({ type: "fledge/glance_preview", entry_id: t.entry_id, glance: this._glanceSent(),
+        night, weather: this._draft.weather || null, entities: this._entities().filter((id) => !isFace(id)) });
+      this._gpreview = { ...preview, of };
       key = `${JSON.stringify(this._gpreview)} ${Math.floor(Date.now() / 60000)}`;
     } catch (err) {
       this._error = err?.message || String(err);
@@ -1508,7 +1642,8 @@ class FledgePanel extends HTMLElement {
   _glanceShown() {
     const p = this._gpreview;
     const { night, layout } = this._glanceEditing();
-    return p && p.glance.layout === layout && !!p.glance.night === night ? p : null;
+    const of = this._editedFace() ? this._gface : null;
+    return p && p.glance.layout === layout && !!p.glance.night === night && p.of === of ? p : null;
   }
 
   _glanceScreen() {
@@ -1524,17 +1659,17 @@ class FledgePanel extends HTMLElement {
   }
 
   // A layout's thumbnail, from sample words for the lines chosen for it.
-  _glanceThumb(layout, night) {
+  _glanceThumb(layout, night, face = null) {
     const f = new Face(this._look === "fledge");
     const g = this._draft.glance;
     const twelve = this._gpreview?.twelve ?? g.hours === "12";
-    const lines = glanceLines(night ? g.night.lines : g.lines, layout, night).map((l) => {
+    const lines = glanceLines(face ? face.lines || {} : night ? g.night.lines : g.lines, layout, night).map((l) => {
       const [text, icon] = GLANCE_SAMPLES[l.source] || [""];
       return { text: l.source === "time" ? glanceTime(845, twelve, g.ampm) : text, icon };
-    });
+    }).filter((l) => l.text);
     const now = new Date();
     const at = Math.floor(Date.UTC(2026, 0, 1, now.getHours(), now.getMinutes()) / 1000);
-    const sample = { layout, clock: { hours: twelve ? 12 : 24, ampm: g.ampm }, offset: 0, colour: g.colour,
+    const sample = { layout, clock: { hours: twelve ? 12 : 24, ampm: g.ampm }, offset: 0, colour: face ? face.colour !== false : g.colour,
       weather: { condition: "partlycloudy", temperature: 9 }, big: { label: "Electricity", value: "24.3", unit: "p/kWh" },
       event: { title: "Dentist", start: at + 7200, all_day: false } };
     glanceFace(f, sample, lines, { current: 20.5, action: "heating" }, at);
@@ -1580,10 +1715,11 @@ class FledgePanel extends HTMLElement {
     const g = d.glance;
     const n = g.night;
     const t = this._current;
-    const { night, layout, chosen } = this._glanceEditing();
+    const { night, layout, chosen, face, own: target } = this._glanceEditing();
     const shown = this._glanceShown();
-    const old = t.protocol != null && t.protocol < 11;
-    const unshown = d.far !== "glance" && d.near !== "glance";
+    const old = t.protocol != null && t.protocol < (face ? FACES_PROTOCOL : 11);
+    const unshown = !face && d.far !== "glance" && d.near !== "glance";
+    const faceIds = this._entities().filter(isFace);
     const seg = (act, on, label) => `<button class="seg ${on ? "on" : ""}" data-act="${act}" aria-pressed="${on}">${label}</button>`;
     const sw = (act, on, label) => this._switch(act, on, label);
     const layoutName = (k) => GLANCE_LAYOUTS.find(([key]) => key === k)[1];
@@ -1614,11 +1750,15 @@ class FledgePanel extends HTMLElement {
       }
       return `<div class="gslot"><div class="field"><label for="gsrc${i}">${names[i]}</label><select id="gsrc${i}" class="pick wide" data-input="gsource" data-i="${i}">${options}</select></div>${extra}${this._glanceHint(l, shown?.lines[i])}</div>`;
     };
-    const every = [...Object.values(g.lines), ...Object.values(n.lines), glanceLines(g.lines, g.layout, false), glanceLines(n.lines, n.layout, true)].flat();
+    // What the shared settings are for: the glance's lines and every face's.
+    const faces = faceIds.map((id) => d.faces[id]).filter(Boolean);
+    const every = [...Object.values(g.lines), ...Object.values(n.lines), glanceLines(g.lines, g.layout, false), glanceLines(n.lines, n.layout, true),
+      ...faces.flatMap((f) => [...Object.values(f.lines || {}), glanceLines(f.lines || {}, f.layout || "clock", false)])].flat();
     const from = (sources) => every.some((l) => sources.includes(l?.source) || sources.includes(l?.else));
-    const usesCalendar = g.layout === "agenda" || n.layout === "agenda" || from(["calendar"]);
-    const usesWeather = g.layout === "weather" || n.layout === "weather" || from(["weather", "forecast", "rain"]);
-    const usesDate = g.layout === "agenda" || n.layout === "agenda" || from(["date", "date_short", "calendar"]);
+    const layoutsUsed = [g.layout, n.layout, ...faces.map((f) => f.layout)];
+    const usesCalendar = layoutsUsed.includes("agenda") || from(["calendar"]);
+    const usesWeather = layoutsUsed.includes("weather") || from(["weather", "forecast", "rain"]);
+    const usesDate = layoutsUsed.includes("agenda") || from(["date", "date_short", "calendar"]);
     const language = this._hass.language || "en";
     const foreign = !language.toLowerCase().startsWith("en");
     const words = foreign ? dateWords(language) : null;
@@ -1633,18 +1773,18 @@ class FledgePanel extends HTMLElement {
           <option value="${esc(language)}" ${g.words ? "selected" : ""} ${words ? "" : "disabled"}>${esc(languageName(language))}${words ? "" : " (not in the Nest's alphabet)"}</option></select></div>` : ""}</div>` : "";
     let extras = "";
     if (layout === "number") {
-      extras = `${this._entityField("gbig", "sensor,input_number,number,counter", "The number", g.big)}
-        ${g.big ? "" : `<p class="now muted">Choose a sensor with a number: a price, a power, a battery.</p>`}
-        <div class="field"><label for="gbiglabel">Called</label><input id="gbiglabel" type="text" maxlength="40" placeholder="Its name" value="${esc(g.big_label || "")}" data-input="gbiglabel"></div>`;
+      extras = `${this._entityField("gbig", "sensor,input_number,number,counter", "The number", target.big)}
+        ${target.big ? "" : `<p class="now muted">Choose a sensor with a number: a price, a power, a battery.</p>`}
+        <div class="field"><label for="gbiglabel">Called</label><input id="gbiglabel" type="text" maxlength="40" placeholder="Its name" value="${esc(target.big_label || "")}" data-input="gbiglabel"></div>`;
     } else if (layout === "temp") {
-      extras = `<div class="kv flat"><span>Colour the screen while heating or cooling<span class="sub">Orange or blue, as the Nest's own Farsight</span></span>${sw("gcolour", g.colour, "Colour the screen while heating or cooling")}</div>`;
+      extras = `<div class="kv flat"><span>Colour the screen while heating or cooling<span class="sub">Orange or blue, as the Nest's own Farsight</span></span>${sw("gcolour", target.colour !== false, "Colour the screen while heating or cooling")}</div>`;
     } else if (layout === "agenda" && !g.calendars.length) {
       extras = `<p class="now muted">Choose a calendar below.</p>`;
     } else if (layout === "weather" && !d.weather) {
       extras = `<p class="now muted">Choose a weather entity below.</p>`;
     }
     const nightNow = this._gpreview?.night_now;
-    const when = night ? `<h2>When it's night</h2>
+    const when = face ? "" : night ? `<h2>When it's night</h2>
         <div class="field"><label for="gnmode">Night is</label><select id="gnmode" class="pick wide" data-input="gnmode">${GLANCE_NIGHT.map(([k, label]) => `<option value="${k}" ${k === n.mode ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
         ${n.mode === "off" ? `<p class="now muted">The Nest shows the day's glance all the time. Choose when night is to use this one.</p>` : ""}
         ${n.mode === "sun" ? `<div class="split"><div class="field"><label for="gafter">Minutes after sunset</label><input id="gafter" type="number" min="-180" max="180" value="${esc(n.after)}" data-input="gafter"></div>
@@ -1659,18 +1799,29 @@ class FledgePanel extends HTMLElement {
           <p class="now muted">${nightNow ? "By these settings it's night now." : "By these settings it's day now."}${n.mode === "sensor" ? " If the sensor is unavailable, it's day." : ""}</p>` : ""}`
       : `<p class="muted small nightline">${n.mode === "off" ? "At night: the same glance." : `At night: ${esc(layoutName(n.layout))}, ${esc(this._glanceNightWhen())}.`}
           <button class="btn text" data-act="gnight">${n.mode === "off" ? "Set up a night glance" : "Edit"}</button></p>`;
+    const designing = faceIds.length ? `<div class="group"><span class="muted small">Designing</span>
+        <div class="chips" role="radiogroup" aria-label="Which face">
+          <button class="chipbtn ${face ? "" : "on"}" role="radio" aria-checked="${!face}" data-act="gface" data-id="">The glance</button>
+          ${faceIds.map((id) => `<button class="chipbtn ${this._gface === id ? "on" : ""}" role="radio" aria-checked="${this._gface === id}" data-act="gface" data-id="${esc(id)}">${esc(this._name(id))} card</button>`).join("")}
+          <button class="chipbtn plus" data-act="addface" data-stay="1">+ New face card</button>
+        </div></div>` : `<p class="muted small nightline">Want this as a card you can turn to?
+          <button class="btn text" data-act="addface" data-stay="1">New face card</button></p>`;
+    const cardNote = face ? `<div class="banner note inline"><span>A card's face is the same day and night, and never dimmed: someone is standing at it.</span>
+        <button class="btn text" data-act="facecard">Its card</button></div>` : "";
     return `<div class="cols glance">
-      <section class="stage" aria-label="The glance as the Nest shows it">
-        <span class="muted caps">On the Nest${night ? " · at night" : ""}</span>
-        <div class="bezel ${this._gview.far ? "far" : ""}"><div class="screen ${night && n.dim ? "dim" : ""}" style="--lvl:${n.level / 100}">${this._glanceScreen()}</div></div>
-        <div class="segs" role="group" aria-label="How far away">${seg("gnear", !this._gview.far, "Close up")}${seg("gfar", this._gview.far, "Across the room")}</div>
+      <section class="stage" aria-label="${face ? "The face as the Nest shows it" : "The glance as the Nest shows it"}">
+        <span class="muted caps">On the Nest${face ? ` · ${esc(this._name(this._gface))} card, opened` : night ? " · at night" : ""}</span>
+        <div class="bezel ${this._gview.far && !face ? "far" : ""}"><div class="screen ${night && n.dim ? "dim" : ""}" style="--lvl:${n.level / 100}">${this._glanceScreen()}</div></div>
+        ${face ? "" : `<div class="segs" role="group" aria-label="How far away">${seg("gnear", !this._gview.far, "Close up")}${seg("gfar", this._gview.far, "Across the room")}</div>`}
         <button class="btn ghost" data-act="gtry" ${t.loaded ? "" : "disabled"}><ha-icon icon="mdi:eye-outline"></ha-icon>Try on the Nest</button>
-        <span class="muted small center">Shows this glance on the Nest for 20 seconds, without saving it.</span>
+        <span class="muted small center">Shows this ${face ? "face" : "glance"} on the Nest for 20 seconds, without saving it.</span>
       </section>
       <section class="card pad">
+        ${designing}
+        ${cardNote}
         ${unshown ? `<div class="banner warn inline">Nothing shows the glance yet. Choose it for someone across the room or close up. <button class="btn text" data-act="tab" data-tab="wake">Wake &amp; presence</button></div>` : ""}
-        ${old ? `<div class="banner warn inline">The Nest's Fledge build is older than these layouts: it shows the clock as before until it updates. <button class="btn text" data-act="tab" data-tab="thermostat">Thermostat</button></div>` : ""}
-        <div class="segs wide" role="group" aria-label="Which glance">${seg("gday", !night, "Day glance")}${seg("gnight", night, "Night glance")}</div>
+        ${old ? `<div class="banner warn inline">${face ? "The Nest's Fledge build is older than face cards: it leaves them out until it updates." : "The Nest's Fledge build is older than these layouts: it shows the clock as before until it updates."} <button class="btn text" data-act="tab" data-tab="thermostat">Thermostat</button></div>` : ""}
+        ${face ? "" : `<div class="segs wide" role="group" aria-label="Which glance">${seg("gday", !night, "Day glance")}${seg("gnight", night, "Night glance")}</div>`}
         ${when}
         <h2>Layout</h2>
         <div class="lays" role="radiogroup" aria-label="Layout">${layouts}</div>
@@ -1678,7 +1829,7 @@ class FledgePanel extends HTMLElement {
         <div class="head2"><h2>Lines</h2>${chosen[layout] ? `<button class="btn text" data-act="greset">Reset</button>` : ""}</div>
         <p class="muted small">${lines.length === 1 ? `${esc(layoutName(layout))} has room for one line.` : `${esc(layoutName(layout))} has room for ${lines.length} lines, top to bottom.`} A line with nothing to say takes no room: the ones below move up.</p>
         ${lines.map(slot).join("")}
-        <h2>For day and night</h2>
+        <h2>${faceIds.length ? "For the glance and every face" : "For day and night"}</h2>
         <div class="field"><label for="ghours">Time format</label><select id="ghours" class="pick wide" data-input="ghours">
           <option value="auto" ${g.hours === "auto" ? "selected" : ""}>Automatic${this._gpreview ? ` (${this._gpreview.twelve ? "12" : "24"}-hour here)` : ""}</option>
           <option value="12" ${g.hours === "12" ? "selected" : ""}>12-hour</option><option value="24" ${g.hours === "24" ? "selected" : ""}>24-hour</option></select></div>
@@ -1694,9 +1845,7 @@ class FledgePanel extends HTMLElement {
 
   // The lines being edited, made the layout's own on the first change.
   _glanceLine(i) {
-    const { night, layout } = this._glanceEditing();
-    const g = this._draft.glance;
-    const chosen = night ? g.night.lines : g.lines;
+    const { night, layout, chosen } = this._glanceEditing();
     if (!chosen[layout]) chosen[layout] = glanceLines(chosen, layout, night);
     return chosen[layout][i];
   }
@@ -1704,7 +1853,7 @@ class FledgePanel extends HTMLElement {
   async _glanceTry() {
     const t = this._current;
     try {
-      const result = await this._hass.callWS({ type: "fledge/glance_try", entry_id: t.entry_id, glance: this._draft.glance,
+      const result = await this._hass.callWS({ type: "fledge/glance_try", entry_id: t.entry_id, glance: this._glanceSent(),
         night: this._glanceEditing().night });
       this._flash(result.protocol != null && result.protocol < 11
         ? "Sent, but the Nest's Fledge build is too old to show it. Update it on the Thermostat tab."
@@ -1873,6 +2022,32 @@ class FledgePanel extends HTMLElement {
       .slice(0, 80);
   }
 
+  // The Add dialog's first choice: a glance face, unless the search is for
+  // something else.
+  _faceOffer() {
+    const q = this._query.trim().toLowerCase();
+    if (q && !["glance", "face", "clock", "time", "weather", "calendar", "look"].some((w) => w.startsWith(q) || q.startsWith(w))) return "";
+    const g = this._draft.glance;
+    return `<div class="muted caps grouphead">Something to look at</div>
+      <button class="pickrow faceoffer" data-act="addface">
+        <span class="thumb"><span class="screen">${this._glanceThumb(g.layout, false)}</span></span>
+        <span class="text"><span class="name">A glance face</span>
+          <span class="sub wrap">The time, the weather, what's next or any sensor, as a card you can turn to. Starts as a copy of your glance.</span></span>
+        <ha-icon icon="mdi:plus"></ha-icon></button>`;
+  }
+
+  // A new face card, a copy of the day's glance, after the others.
+  _addFace() {
+    const d = this._draft;
+    const g = d.glance;
+    const id = newFaceId();
+    d.faces[id] = { layout: g.layout, lines: JSON.parse(JSON.stringify(g.lines || {})), big: g.big || null,
+      big_label: g.big_label || null, colour: g.colour !== false, actions: [], hold: null };
+    d.order.push(id);
+    this._sel = d.order.length - 1;
+    return id;
+  }
+
   _addDialog() {
     const list = this._candidates();
     return `<div class="scrim" data-act="closeadd"></div>
@@ -1880,7 +2055,7 @@ class FledgePanel extends HTMLElement {
         <div class="head"><h2 id="addtitle">Add a card</h2><button class="icon" data-act="closeadd" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button></div>
         <label class="hidden" for="search">Search</label>
         <input id="search" type="search" placeholder="Lights, speakers, cameras, scenes…" value="${esc(this._query)}" data-input="search" autocomplete="off">
-        <div class="results">${list.length ? list.map((c) => `<button class="pickrow" data-act="addone" data-id="${esc(c.id)}">
+        <div class="results">${this._faceOffer()}${list.length ? `<div class="muted caps grouphead">Something to control</div>` : ""}${list.length ? list.map((c) => `<button class="pickrow" data-act="addone" data-id="${esc(c.id)}">
             <span class="ico"><ha-icon icon="${esc(c.icon)}"></ha-icon></span>
             <span class="text"><span class="name">${esc(c.name)}</span><span class="sub">${esc(c.id)}</span></span>
             <span class="muted small">${esc(KINDS[domainOf(c.id)] || "")}</span></button>`).join("")
@@ -1899,12 +2074,64 @@ class FledgePanel extends HTMLElement {
       case "tab":
         this._tab = el.dataset.tab;
         if (this._tab === "glance") this._glanceRefresh();
+        // A face designed meanwhile: its card drawn again.
+        if (this._tab === "cards" && this._entities().some(isFace)) this._refresh();
         break;
-      case "glayout":
-        if (this._gview.night) d.glance.night.layout = el.dataset.k;
+      case "glayout": {
+        const face = this._editedFace();
+        if (face) face.layout = el.dataset.k;
+        else if (this._gview.night) d.glance.night.layout = el.dataset.k;
         else d.glance.layout = el.dataset.k;
         this._glanceSoon();
+        if (face) this._refreshSoon();
         break;
+      }
+      case "gface":
+        this._gface = el.dataset.id || null;
+        this._gpreview = null;
+        this._glanceRefresh();
+        break;
+      case "addface": {
+        const id = this._addFace();
+        this._adding = false;
+        if (el.dataset.stay) {
+          this._gface = id;
+          this._gpreview = null;
+          this._glanceRefresh();
+        }
+        this._refresh();
+        return;
+      }
+      case "faceedit":
+        this._gface = d.order[this._sel];
+        this._tab = "glance";
+        this._gpreview = null;
+        this._glanceRefresh();
+        break;
+      case "facecard": {
+        const at = d.order.indexOf(this._gface);
+        if (at >= 0) this._sel = at;
+        this._tab = "cards";
+        this._refresh();
+        return;
+      }
+      case "faceactmove": {
+        const face = d.faces[d.order[this._sel]];
+        const i = Number(el.dataset.i);
+        const to = i + Number(el.dataset.by);
+        if (!face || to < 0 || to >= face.actions.length) return;
+        const [moved] = face.actions.splice(i, 1);
+        face.actions.splice(to, 0, moved);
+        break;
+      }
+      case "faceactremove": {
+        const face = d.faces[d.order[this._sel]];
+        if (!face) return;
+        const [gone] = face.actions.splice(Number(el.dataset.i), 1);
+        if (face.hold === gone) face.hold = null;
+        this._refresh();
+        return;
+      }
       case "greset": {
         const { layout, chosen } = this._glanceEditing();
         delete chosen[layout];
@@ -1917,7 +2144,12 @@ class FledgePanel extends HTMLElement {
       case "gfar": this._gview.far = true; break;
       case "gtry": this._glanceTry(); return;
       case "gampm": d.glance.ampm = !d.glance.ampm; this._glanceSoon(); break;
-      case "gcolour": d.glance.colour = !d.glance.colour; this._glanceSoon(); break;
+      case "gcolour": {
+        const own = this._glanceEditing().own;
+        own.colour = own.colour === false;
+        this._glanceSoon();
+        break;
+      }
       case "gdim": d.glance.night.dim = !d.glance.night.dim; this._glanceSoon(); break;
       case "gallday": d.glance.skip_all_day = !d.glance.skip_all_day; this._glanceSoon(); break;
       case "select": this._sel = Number(el.dataset.i); break;
@@ -1932,6 +2164,11 @@ class FledgePanel extends HTMLElement {
         if (id === THERMO) return;
         d.order.splice(this._sel, 1);
         if (d.wake_device === id) d.wake_device = null;
+        if (isFace(id)) {
+          delete d.faces[id];
+          delete d.names[id];
+          if (this._gface === id) this._gface = null;
+        }
         this._sel = Math.min(this._sel, d.order.length - 1);
         break;
       }
@@ -2044,6 +2281,10 @@ class FledgePanel extends HTMLElement {
       const settings = (d.alarms[d.order[this._sel]] ||= {});
       settings.code_length = Number(el.value) || null;
       this._render();
+    } else if (what === "facehold" && e.type === "change") {
+      const face = d.faces[d.order[this._sel]];
+      if (face) face.hold = el.value || null;
+      this._render();
     } else if (what === "devicename") {
       d.device_name = el.value;
       this._render();
@@ -2114,7 +2355,7 @@ class FledgePanel extends HTMLElement {
       return true;
     }
     if (what === "gbiglabel") {
-      g.big_label = el.value;
+      this._glanceEditing().own.big_label = el.value;
       if (change) this._glanceSoon();
       else this._saveBarOnly();
       return true;
@@ -2190,9 +2431,16 @@ class FledgePanel extends HTMLElement {
 
   _choose(key, value) {
     const g = this._draft.glance;
+    if (key === "faceact") {
+      const face = this._draft.faces[this._draft.order[this._sel]];
+      if (face && value && !face.actions.includes(value) && face.actions.length < FACE_MAX_ACTIONS) face.actions.push(value);
+      this._render();
+      this._refresh();
+      return;
+    }
     if (key.startsWith("gline")) {
       this._glanceLine(Number(key.slice(5))).entity = value || null;
-    } else if (key === "gbig") g.big = value || null;
+    } else if (key === "gbig") this._glanceEditing().own.big = value || null;
     else if (key.startsWith("gcal")) {
       const chosen = [...g.calendars];
       chosen[Number(key.slice(4))] = value || "";
@@ -2365,6 +2613,20 @@ code{font-family:var(--code-font-family,ui-monospace,monospace);font-size:.9em}
 .chipbtn{height:32px;padding:0 12px;border-radius:16px;border:1px solid var(--fl-line);background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chipbtn.on{border-color:var(--fl-primary);background:rgba(var(--rgb-primary-color,3,169,244),.16);color:var(--fl-primary)}
 .chipbtn:focus-visible,.seg:focus-visible{outline:2px solid var(--fl-primary);outline-offset:2px}
+.chipbtn.plus{border-style:dashed;color:var(--fl-primary)}
+.banner.note{background:rgba(127,127,127,.12)}
+.banner .btn{white-space:nowrap;flex:none}
+.sub.wrap{white-space:normal;line-height:1.35}
+.grouphead{padding:8px 4px 4px}
+.faceoffer{min-height:84px}
+.faceoffer .thumb,.facerow .thumb{width:64px;height:64px;display:block;flex:none}
+.faceoffer .thumb .screen,.facerow .thumb .screen{display:block}
+.faceoffer ha-icon{color:var(--fl-primary)}
+.facerow{display:flex;gap:14px;align-items:center;border:1px solid var(--fl-line);border-radius:10px;padding:12px 14px}
+.facerow .text{gap:6px}
+.actrow{display:flex;align-items:center;gap:4px;min-height:52px;padding:4px 4px 4px 12px;border:1px solid var(--fl-line);border-radius:10px}
+.actrow .icon{width:36px;height:36px;--mdc-icon-size:18px;color:var(--fl-muted)}
+.actrow .icon[disabled]{opacity:.3;cursor:default}
 .opt input[disabled]+.text{opacity:.5}
 ha-entity-picker{display:block}
 .dots{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}

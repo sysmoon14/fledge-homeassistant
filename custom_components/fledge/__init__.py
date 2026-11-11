@@ -35,10 +35,10 @@ from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
-from . import art, cards, glance, panel, schedule
+from . import art, cards, faces, glance, panel, schedule
 from .feeds import Feeds
 from .config_flow import thermostats
-from .const import (CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -236,8 +236,10 @@ class Thermostat:
             # The sun too: Automatic wakes to the lights after sunset; and a
             # chosen light group's own lights, listed on its card.
             weather = [self.entry.options[CONF_WEATHER]] if self.entry.options.get(CONF_WEATHER) else []
+            # A face's actions too: a switched one shows whether it's on.
+            followed = [e for e in self.entities if not faces.is_face(e)]
             self._tracking = async_track_state_change_event(
-                self.hass, [*self.entities, *self._members(), *weather, "sun.sun"], self._changed)
+                self.hass, [*followed, *self._members(), *faces.entities(self.faces), *weather, "sun.sun"], self._changed)
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.command_topic, self._command))
         self._unsubscribe.append(await mqtt.async_subscribe(self.hass, self.protocol_topic, self._protocol))
         self._unsubscribe.append(self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed))
@@ -290,6 +292,29 @@ class Thermostat:
         self._link()
         self.hass.async_create_task(self._publisher.async_call())
 
+    @property
+    def faces(self) -> dict[str, dict[str, Any]]:
+        """The glance faces among the cards, by id, their settings filled in."""
+        return faces.kept(self.entry.options.get(CONF_FACES), self.entities)
+
+    def face_card(self, face_id: str, face: dict[str, Any], shared: dict[str, Any] | None = None,
+                  given: str | None = None, weather: Any = False, entities: list[str] | None = None) -> dict[str, Any]:
+        """A glance face's card as the Nest takes it: drawn as the glance
+        is, with the glance's shared settings (`shared`: the panel's unsaved
+        ones, else the saved)."""
+        if shared is None:
+            shared = self.entry.options.get(CONF_GLANCE_SETTINGS)
+        shown, _ = self.glance_for(faces.glance_raw(face, shared), False, weather, entities)
+        return faces.card(face_id, face, shown, self.hass.states.get, given)
+
+    def _glances(self) -> list[dict[str, Any]]:
+        """Every glance the Nest is sent, its settings filled in: the glance
+        itself (if anything shows it) and each face's."""
+        far, near, _ = presence(self.entry.options)
+        shared = self.entry.options.get(CONF_GLANCE_SETTINGS)
+        out = [glance.settings(shared)] if FAR_GLANCE in (far, near) else []
+        return out + [glance.settings(faces.glance_raw(face, shared)) for face in self.faces.values()]
+
     def own_glance(self) -> bool:
         """Whether the Nest is sent a glance that isn't the glance as it was
         (so its build must know protocol 11): one is shown, and customised."""
@@ -332,29 +357,29 @@ class Thermostat:
         for unsubscribe in self._glance_tracking:
             unsubscribe()
         self._glance_tracking = []
-        far, near, _ = presence(self.entry.options)
-        if FAR_GLANCE not in (far, near):
+        shown = self._glances()
+        if not shown:
             return
-        chosen = glance.settings(self.entry.options.get(CONF_GLANCE_SETTINGS))
         # The night's sensor (a bedtime switch) and who's home reach the Nest
         # at once; a line's sensor, which may change every second, at most
         # every LINES_EVERY, so a chatty one doesn't keep the Nest awake.
-        prompt = [glance.night_sensor(chosen)] if glance.night_sensor(chosen) else []
-        if glance.uses(chosen, "people"):
+        prompt = [glance.night_sensor(chosen) for chosen in shown if glance.night_sensor(chosen)]
+        if any(glance.uses(chosen, "people") for chosen in shown):
             prompt += self.hass.states.async_entity_ids("person")
         if prompt:
             self._glance_tracking.append(async_track_state_change_event(self.hass, sorted(set(prompt)), self._changed))
-        watched = [e for e in glance.watched(chosen) if e not in self.entities]
+        watched = sorted({e for chosen in shown for e in glance.watched(chosen) if e not in self.entities})
         if watched:
             self._glance_tracking.append(async_track_state_change_event(self.hass, watched, self._line_changed))
-        if glance.wants_events(chosen):
+        if any(glance.wants_events(chosen) for chosen in shown):
             # The next event: as a calendar changes, and every few minutes.
-            self._glance_tracking.append(async_track_state_change_event(self.hass, glance.calendars(chosen), self._events_changed))
+            # The calendars are shared by the glance and its faces.
+            self._glance_tracking.append(async_track_state_change_event(self.hass, glance.calendars(shown[0]), self._events_changed))
             self._glance_tracking.append(async_track_time_interval(self.hass, self._events_changed, EVENTS_EVERY))
             self._events_changed()
         else:
             self.events, self._events_of = None, []
-        sources = glance.templates(chosen)
+        sources = [source for chosen in shown for source in glance.templates(chosen)]
         tracked = []
         for source in sources:
             template = Template(source, self.hass)
@@ -473,7 +498,9 @@ class Thermostat:
         night = sun is not None and sun.state == "below_horizon"
         shown = cards.cards(self.entities, self.hass.states.get, options.get(CONF_WAKE, WAKE_CHOOSER),
                             options.get(CONF_WAKE_DEVICE), night, options.get(CONF_NAMES),
-                            options.get(CONF_THERMOSTAT, 0), options.get(CONF_ALARMS))
+                            options.get(CONF_THERMOSTAT, 0), options.get(CONF_ALARMS),
+                            {face_id: self.face_card(face_id, face, given=(options.get(CONF_NAMES) or {}).get(face_id))
+                             for face_id, face in self.faces.items()})
         far, near, idle = presence(options)
         shown["presence"] = {"far": far, "near": near}
         shown["card_idle"] = idle
@@ -575,7 +602,7 @@ class Thermostat:
             payload = json.loads(message.payload)
         except (TypeError, ValueError):
             return
-        allowed = [*self.entities, *self._members()]
+        allowed = [*self.entities, *self._members(), *faces.entities(self.faces)]
         call = cards.command(payload, allowed, self.hass.states.get) if isinstance(payload, dict) else None
         if call is None:
             _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", cards.redacted(payload))

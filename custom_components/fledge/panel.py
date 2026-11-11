@@ -19,10 +19,10 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 
-from . import cards, glance
+from . import cards, faces, glance
 from .config_flow import options_from, thermostats
 from .feeds import acts_as_thermostat, option_switch, regulates_from_a_sensor, role_switch, wwn_switch
-from .const import (CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
                     DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
@@ -138,6 +138,8 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
                        FAR_GLANCE in presence(entry.options)[:2] and glance.customised(entry.options.get(CONF_GLANCE_SETTINGS))),
         # The glance's settings, defaults filled in, and whether it's night now.
         "glance": glance.settings(entry.options.get(CONF_GLANCE_SETTINGS)),
+        # The glance faces among the cards, by id, defaults filled in.
+        "faces": faces.kept(entry.options.get(CONF_FACES), list(entry.options.get(CONF_ENTITIES, []))),
         "night": running.night if running else False,
         # The Nest's Act as a thermostat switch (protocol 10), and whether it is.
         "role_switch": role_switch(hass, serial),
@@ -165,6 +167,12 @@ def ws_thermostats(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
     vol.Optional("names", default={}): {cv.entity_id: str},
     vol.Optional("climate"): vol.Any(None, cv.entity_id),
     vol.Optional(CONF_ALARMS, default={}): {cv.entity_id: dict},
+    # The glance faces among them (unsaved), drawn by this thermostat with
+    # the glance's shared settings.
+    vol.Optional("entry_id"): str,
+    vol.Optional(CONF_FACES, default={}): {cv.entity_id: dict},
+    vol.Optional("glance"): dict,
+    vol.Optional("weather"): vol.Any(None, cv.entity_id),
 })
 @websocket_api.require_admin
 @callback
@@ -173,8 +181,15 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     panel draws. Entities Home Assistant doesn't know have none."""
     get = hass.states.get
     names = {k: v.strip()[:NAME_LENGTH] for k, v in msg["names"].items() if v.strip()}
+    entry = hass.config_entries.async_get_entry(msg["entry_id"]) if msg.get("entry_id") else None
+    running = getattr(entry, "runtime_data", None) if entry and entry.state is ConfigEntryState.LOADED else None
     shown = {}
+    devices = [e for e in msg["entities"] if not faces.is_face(e)]
     for entity_id in msg["entities"]:
+        if faces.is_face(entity_id):
+            if running is not None:
+                shown[entity_id] = _face_preview(hass, running, entity_id, msg, names.get(entity_id), devices)
+            continue
         state = get(entity_id)
         if state is not None:
             shown[entity_id] = cards.named(cards.card(state, get, msg[CONF_ALARMS]), names.get(entity_id))
@@ -183,6 +198,22 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
         "cards": shown,
         "thermostat": cards.climate(climate) if climate is not None and climate.domain == "climate" else None,
     })
+
+
+def _face_preview(hass: HomeAssistant, running: Any, face_id: str, msg: dict[str, Any], given: str | None,
+                  devices: list[str]) -> dict[str, Any]:
+    """A glance face's card as the Nest would get it from the panel's
+    settings, and its lines in words (`said`) for the panel to draw."""
+    face = faces.settings(msg[CONF_FACES].get(face_id))
+    shared = msg.get("glance") if msg.get("glance") is not None else running.entry.options.get(CONF_GLANCE_SETTINGS)
+    weather = msg["weather"] if "weather" in msg else running.entry.options.get(CONF_WEATHER)
+    card = running.face_card(face_id, face, shared, given, weather, devices)
+    chosen = glance.settings(faces.glance_raw(face, shared))
+    sources = running.glance_sources(chosen, weather, devices)
+    climate = _thermostat(hass, running.entry)["climate"]
+    said = [sources.preview(spec, hass.states.get(climate) if climate else None)
+            for spec in glance.lines_for(chosen["lines"], chosen["layout"])]
+    return {**card, "said": said}
 
 
 @websocket_api.websocket_command({
@@ -205,6 +236,9 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     # An older panel doesn't send it: kept.
     vol.Optional(CONF_ALARMS): {cv.entity_id: ALARM_SETTINGS},
     vol.Optional(CONF_GLANCE_SETTINGS): dict,
+    # The glance faces among the cards, by id. An older panel doesn't send
+    # them: kept.
+    vol.Optional(CONF_FACES): {cv.entity_id: dict},
 })
 @websocket_api.require_admin
 @callback
@@ -217,10 +251,18 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         return
     own = set(_thermostat(hass, entry)["own"])
     entities = list(dict.fromkeys(msg[CONF_ENTITIES]))
-    wrong = [e for e in entities if e.partition(".")[0] not in DOMAINS or e in own]
+    wrong = [e for e in entities if (e.partition(".")[0] not in DOMAINS and not faces.is_face(e)) or e in own]
     if wrong:
         connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, f"Can't be a card: {', '.join(wrong)}")
         return
+    if CONF_FACES in msg:
+        try:
+            face_settings = {k: faces.SCHEMA(v) for k, v in msg[CONF_FACES].items() if k in entities and faces.is_face(k)}
+        except vol.Invalid as err:
+            connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, f"A glance face's settings: {err}")
+            return
+    else:
+        face_settings = entry.options.get(CONF_FACES)
     if msg.get(CONF_WEATHER) and not msg[CONF_WEATHER].startswith("weather."):
         connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "Not a weather entity")
         return
@@ -257,6 +299,7 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_ROOM_SENSOR: msg[CONF_ROOM_SENSOR] if CONF_ROOM_SENSOR in msg else entry.options.get(CONF_ROOM_SENSOR),
         CONF_THERMOSTAT: msg[CONF_THERMOSTAT],
         CONF_GLANCE_SETTINGS: glance_settings,
+        CONF_FACES: face_settings,
     }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()},
         alarm_settings(msg[CONF_ALARMS]) if CONF_ALARMS in msg else entry.options.get(CONF_ALARMS))
     hass.config_entries.async_update_entry(entry, options=options)

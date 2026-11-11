@@ -304,28 +304,33 @@ def named(card: dict[str, Any], name: str | None) -> dict[str, Any]:
 
 def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
           night: bool = False, names: Mapping[str, str] | None = None, thermostat: int = 0,
-          alarms: Mapping[str, Any] | None = None) -> dict[str, Any]:
+          alarms: Mapping[str, Any] | None = None, faces: Mapping[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state
     from `get` (None: unknown to Home Assistant, left out), and what the
     thermostat wakes to: `device`'s place among the cards, else "chooser"
     or "thermostat" as `wake` says; "auto" picks: the first media player
     playing, else at `night` the first light that's on, else the chooser.
     `names` renames cards, by entity. `thermostat`: the Nest's own card's
-    place, before entities[thermostat]; sent where it isn't first."""
-    shown = [state for state in map(get, entities) if state is not None]
-    ids = [state.entity_id for state in shown]
+    place, before entities[thermostat]; sent where it isn't first. `faces`:
+    the glance faces' cards as built (faces.card), by their ids in the order."""
+    faces = faces or {}
+    def known(entity: str) -> bool:
+        return entity in faces or get(entity) is not None
+    ids = [e for e in entities if known(e)]
+    shown = {e: get(e) for e in ids if e not in faces}
     woken: Any = "thermostat" if wake == "thermostat" else "chooser"
     if wake == "auto":
-        playing = [i for i, s in enumerate(shown) if _domain(s.entity_id) == "media_player" and s.state == "playing"]
-        lit = [i for i, s in enumerate(shown) if night and _domain(s.entity_id) == "light" and s.state == "on"]
+        states = [shown.get(e) for e in ids]
+        playing = [i for i, s in enumerate(states) if s is not None and _domain(s.entity_id) == "media_player" and s.state == "playing"]
+        lit = [i for i, s in enumerate(states) if s is not None and night and _domain(s.entity_id) == "light" and s.state == "on"]
         woken = (playing or lit or ["chooser"])[0]
     if device in ids:
         woken = ids.index(device)
     names = names or {}
-    out: dict[str, Any] = {"cards": [named(card(state, get, alarms), names.get(state.entity_id)) for state in shown],
+    out: dict[str, Any] = {"cards": [faces[e] if e in faces else named(card(shown[e], get, alarms), names.get(e)) for e in ids],
                            "wake": woken}
     # Among the cards shown: those Home Assistant doesn't know are left out.
-    place = sum(1 for e in entities[:max(thermostat, 0)] if get(e) is not None)
+    place = sum(1 for e in entities[:max(thermostat, 0)] if known(e))
     if place:
         out["thermostat"] = place
     return out

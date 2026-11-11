@@ -41,6 +41,11 @@ CONF_NAMES = "names"
 # mode), the modes left off the ring ("hidden"), and how many digits its
 # code has ("code_length"; none: a tick sends it).
 CONF_ALARMS = "alarms"
+# Glance faces as cards (protocol 13), by their id in CONF_ENTITIES
+# (FACE_DOMAIN.<key>, never a real entity): each its layout, lines, actions
+# and hold (faces.SCHEMA).
+CONF_FACES = "faces"
+FACE_DOMAIN = "fledge_face"
 # Where the thermostat's own card goes among them: before entities[n] (0, first).
 CONF_THERMOSTAT = "thermostat"
 # Whether the thermostat has its own card at all (protocol 10; shown unless
@@ -78,11 +83,15 @@ PROTOCOL_ALARM = 9
 PROTOCOL_ROLE = 10
 # The glance's layouts, lines, 12-hour clock and night (glance.py).
 PROTOCOL_GLANCE = 11
+# Glance faces as cards, with actions (faces.py).
+PROTOCOL_FACE = 13
 
 
 def needs(entities, show_thermostat: bool = True, glance: bool = False) -> int:
     """The protocol a thermostat's build needs for these cards, for its
     own card hidden, and for a glance of its own (`glance`)."""
+    if any(str(e).startswith(f"{FACE_DOMAIN}.") for e in entities or []):
+        return PROTOCOL_FACE
     if glance:
         return PROTOCOL_GLANCE
     if not show_thermostat:
