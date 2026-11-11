@@ -120,8 +120,10 @@ saving:
 - **Lines**: up to three under the big element. The Nest works out the date, the
   time, its temperature and humidity, its heating and time to temperature, the
   weather and what's on itself. Home Assistant sends today's high and low, when
-  rain arrives, sunrise or sunset, what's playing, your next event, who's home,
-  any entity's value, or a template.
+  rain arrives, sunrise or sunset, what a speaker you choose is playing, your
+  next event, who's home, any entity's value (a door says Open, a timestamp
+  reads as a time), or a template. A sensor that changes every second reaches
+  the Nest at most every 15 seconds.
 - **At night**: a different layout and lines, from sunset to sunrise (shifted
   by up to three hours), between set times, or while a sensor such as a bedtime
   switch is on (or off), drawn dimmer and warmer if you like.

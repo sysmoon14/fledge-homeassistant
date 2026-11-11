@@ -86,10 +86,22 @@ async def test_lines_worked_out_in_home_assistant(hass: HomeAssistant):
     assert line("forecast") == {"text": "High 12° · Low 5°", "icon": "mdi:thermometer"}
     assert line("rain") == {"text": "Rain from 15:10", "icon": "mdi:weather-rainy"}
     assert line("people") == {"text": "Alex home", "icon": "mdi:account"}
-    assert line("entity", entity="sensor.price") == {"text": "Electricity 24.3 p/kWh", "icon": "mdi:currency-gbp"}
+    assert line("entity", entity="sensor.price") == {"text": "Electricity 24.3 p/kWh"}
+    hass.states.async_set("sensor.cost", "1.5", {"friendly_name": "Today", "unit_of_measurement": "GBP", "device_class": "monetary"})
+    assert line("entity", entity="sensor.cost") == {"text": "Today 1.50 GBP", "icon": "mdi:currency-gbp"} or \
+        line("entity", entity="sensor.cost") == {"text": "Today 1.5 GBP", "icon": "mdi:currency-gbp"}
+    hass.states.async_set("binary_sensor.door", "on", {"friendly_name": "Front door", "device_class": "door"})
+    assert line("entity", entity="binary_sensor.door")["text"] in ("Front door Open", "Front door On"), \
+        "in Home Assistant's own words where it has them loaded"
+    hass.states.async_set("sensor.alarm", (now + timedelta(hours=18)).isoformat(), {"friendly_name": "Alarm", "device_class": "timestamp"})
+    assert line("entity", entity="sensor.alarm") == {"text": "Alarm Tomorrow 07:10"}
     assert line("entity", entity="sensor.price", label="Power")["text"] == "Power 24.3 p/kWh"
     assert line("calendar") == {"text": "Tomorrow 09:00 Dentist", "icon": "mdi:calendar"}
-    assert line("playing") == {"text": "Dreams · Fleetwood Mac", "icon": "mdi:play"}
+    assert line("playing") == {"text": "Dreams · Fleetwood Mac", "icon": "mdi:play"}, "no speaker chosen: the cards'"
+    hass.states.async_set("media_player.study", "playing", {"media_title": "Podcast"})
+    assert line("playing", entity="media_player.study") == {"text": "Podcast", "icon": "mdi:play"}, "the speaker chosen"
+    hass.states.async_set("media_player.study", "paused", {"media_title": "Podcast"})
+    assert line("playing", entity="media_player.study") == {"text": ""}, "not the kitchen's instead"
     assert line("template", template="{{ 2 + 2 }} things") == {"text": "4 things"}
     assert line("template", template="{{ nonsense(") == {"text": ""}, "a broken template: an empty line"
     assert line("entity", entity="sensor.gone") == {"text": ""}, "an empty line keeps its place"
@@ -228,3 +240,44 @@ async def test_the_panel_previews_tries_and_saves_the_glance(hass: HomeAssistant
     assert (await client.receive_json())["success"]
     await hass.async_block_till_done()
     assert entry.options["glance_settings"]["layout"] == "temp", "an older panel's save keeps it"
+
+
+async def test_a_chatty_sensor_reaches_the_nest_now_and_then(hass: HomeAssistant, mqtt_mock) -> None:
+    from custom_components.fledge import LINES_EVERY
+
+    hass.states.async_set("sensor.power", "100", {"friendly_name": "Power"})
+    await _set_up(hass, {"lines": {"clock": [{"source": "entity", "entity": "sensor.power"}]}})
+    sent = lambda: json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"][0]["text"]  # noqa: E731
+    assert sent() == "Power 100"
+    hass.states.async_set("sensor.power", "101", {"friendly_name": "Power"})
+    await hass.async_block_till_done()
+    assert sent() == "Power 101", "the first change at once"
+    for watts in ("102", "103", "104"):
+        hass.states.async_set("sensor.power", watts, {"friendly_name": "Power"})
+        await hass.async_block_till_done()
+    assert sent() == "Power 101", "the rest held"
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=LINES_EVERY + 1))
+    await hass.async_block_till_done()
+    assert sent() == "Power 104"
+
+
+async def test_a_glance_nobody_is_shown_needs_no_newer_nest(hass: HomeAssistant, mqtt_mock) -> None:
+    from homeassistant.helpers import issue_registry as ir
+    from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
+
+    await _set_up(hass, {"layout": "weather"}, far="wake", near="wake")
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/ui/protocol", "10")
+    await hass.async_block_till_done()
+    assert not ir.async_get(hass).async_get_issue(DOMAIN, f"outdated_{SERIAL}")
+
+
+async def test_a_template_that_doesn_t_read_leaves_its_line_empty(hass: HomeAssistant, mqtt_mock) -> None:
+    hass.states.async_set("sensor.bins", "Recycling")
+    await _set_up(hass, {"lines": {"clock": [{"source": "template", "template": "{{ nonsense("},
+                                             {"source": "template", "template": "Bins: {{ states('sensor.bins') }}"}]}})
+    assert json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"] == [{"text": ""}, {"text": "Bins: Recycling"}]
+    hass.states.async_set("sensor.bins", "Garden")
+    await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+    await hass.async_block_till_done()
+    assert json.loads(_published(mqtt_mock)[-1][1])["glance"]["lines"][1] == {"text": "Bins: Garden"}, "a template follows its entities"
