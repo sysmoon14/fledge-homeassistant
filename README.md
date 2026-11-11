@@ -21,19 +21,20 @@
 
 Walk up to the thermostat and it wakes to your devices, zoomed out around the
 thermostat itself, each card's name above it. Turn to browse, press to open;
-nothing is switched or run from the cards themselves, only once a card is open:
+nothing is switched or run from the cards themselves, only once a card is open.
+Open, a press shows its options and a long press does its main action:
 
-| Card | Press | Turn | Long press | Its menu |
+| Card | Press | Turn | Long press | Its options |
 |-|-|-|-|-|
 | **Light** | its dimmer | brightness | on / off | on / off, **warmth** and **colour** dials where it has them, and a group's **each light** |
-| **Switch, fan** | on / off | | on / off | |
+| **Switch, fan** | its switch | | on / off | |
 | **Other thermostat** | its target | the temperature, as the Nest sets its own | | its presets: eco, away… |
 | **Speaker** | its volume | the volume | play / pause | play / pause, previous, next; album art and progress on the card |
 | **Option (select)** | its options | through them | | e.g. the Nest's hot water boost |
 | **Blind, cover** | how open | the position | open / close | open, close |
 | **Scene, script, button** | opens it | | runs it | Run |
 | **Camera** | a fresh picture | | | its latest still fills the card |
-| **Alarm** | opens it; again, arms (its modes), cancels, or disarms | the mode, or each digit of the code | | its modes, named as you like; the code entered on the ring |
+| **Alarm** | its state | the option, or each digit of the code | | arm (its modes, named as you like), Disarm or Cancel; the code entered on the ring |
 | **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
 
 An alarm works with any alarm panel in Home Assistant. Its code is entered
@@ -46,11 +47,12 @@ screen names the sensor that set it off, and a door left open can be armed
 past. Three wrong codes lock the pad for 30 seconds, longer each time; the code
 is never stored. In Fledge's panel, name each mode for the Nest (or copy the
 names from an Alarmo card) and say how long the code is, so the last digit
-sends it. Alarm cards need the thermostat on Fledge's protocol 9.
+sends it. Alarm cards need the thermostat on Fledge v0.7.0 or later.
 
-What you open stays open until you go back (its menu's Back, or a long press
-where that doesn't switch it); left alone, the screen times out, and the next
-wake starts again from the top. Everything is drawn on the thermostat at 60
+What you open stays open until you go back with its options' Back (a long
+press on the cards themselves puts the screen away); left alone, the screen
+times out, and the next wake starts again from the top. Everything is drawn
+on the thermostat at 60
 frames a second, with its clicks, in Fledge's look (above) or, one setting away
 (Settings → Theme on the thermostat), the Nest's own (below). The Nest keeps
 running the heating throughout.
