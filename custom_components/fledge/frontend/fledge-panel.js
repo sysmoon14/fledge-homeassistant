@@ -90,6 +90,49 @@ const GLANCE_SAMPLES = {
   playing: ["Dreams · Fleetwood Mac", "mdi:play"], calendar: ["16:30 Dentist", "mdi:calendar"],
   people: ["Alex home", "mdi:account"], entity: ["Electricity 24.3 p/kWh", "mdi:flash"], template: ["Your words"],
 };
+// What a line with nothing to say can show instead (glance.FALLBACKS).
+const GLANCE_FALLBACKS = [["none", "Nothing: the lines below move up"], ["date", "Date"], ["date_short", "Short date"], ["time", "Time"],
+  ["inside", "Inside temperature and humidity"], ["heating", "Heating and time to temperature"], ["whats_on", "What's on"],
+  ["weather", "Weather now"], ["forecast", "Today's high and low"], ["rain", "When rain arrives"], ["sun", "Sunrise or sunset"],
+  ["playing", "Now playing"], ["calendar", "Next calendar event"], ["people", "Who's home"]];
+// The lines that can have nothing to say.
+const GLANCE_CAN_BE_EMPTY = ["playing", "calendar", "entity", "template", "rain", "forecast", "weather", "sun", "people", "inside", "heating"];
+// When an entity's line shows (glance.WHENS).
+const GLANCE_WHENS = [["always", "Always"], ["on", "Only while it's on"], ["off", "Only while it's off"], ["is", "Only while it is…"],
+  ["is_not", "Only while it isn't…"], ["above", "Only above…"], ["below", "Only below…"]];
+
+// The date's words in `language`, as the browser names them: days from
+// Sunday, months as they read after a day's number; null where they aren't
+// in the Latin alphabet, which is all the Nest's fonts draw.
+function dateWords(language) {
+  try {
+    const part = (options, date, type) => new Intl.DateTimeFormat(language, { ...options, timeZone: "UTC" }).formatToParts(date).find((p) => p.type === type)?.value || "";
+    const day = (i) => new Date(Date.UTC(2023, 0, 1 + i));
+    const month = (i) => new Date(Date.UTC(2023, i, 11));
+    const seven = [0, 1, 2, 3, 4, 5, 6];
+    const twelve = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const words = {
+      days: seven.map((i) => part({ weekday: "long" }, day(i), "weekday")),
+      days_short: seven.map((i) => part({ weekday: "short" }, day(i), "weekday")),
+      months: twelve.map((i) => part({ day: "numeric", month: "long" }, month(i), "month")),
+      months_short: twelve.map((i) => part({ day: "numeric", month: "short" }, month(i), "month")),
+    };
+    const all = Object.values(words).flat();
+    if (all.some((name) => !name || name.length > 24 || !/^[\p{Script=Latin}\p{M}\s.\-'’]+$/u.test(name))) return null;
+    return words;
+  } catch (_) {
+    return null;
+  }
+}
+
+function languageName(language) {
+  try {
+    return capitalise(new Intl.DisplayNames([language], { type: "language" }).of(language));
+  } catch (_) {
+    return language;
+  }
+}
+
 // What a line (or the night) can follow.
 const GLANCE_ENTITIES = "sensor,binary_sensor,input_number,input_text,input_boolean,input_datetime,counter,number,select,input_select,person,device_tracker,climate,weather,sun,lock,cover,timer,alarm_control_panel";
 const GLANCE_QUIET = [196, 203, 211];
@@ -718,7 +761,8 @@ function glanceFace(f, g, lines, nest, now) {
     }
     if (style === "quiet") {
       const size = Math.max(26, Math.min(30, 30 * room / Math.max(1, estimate(line.text, 30, 0))));
-      f.text(240, y, line.text, size, { c: coloured ? [255, 232, 218] : c || GLANCE_QUIET, max: room });
+      // (The estimate runs wide: a little more room than the Nest's, which measures.)
+      f.text(240, y, line.text, size, { c: coloured ? [255, 232, 218] : c || GLANCE_QUIET, max: room * 1.08 });
     } else if (style === "main") {
       c = coloured ? N.WHITE : c || N.WHITE;
       const iconRoom = line.icon ? 56 : 0;
@@ -886,6 +930,11 @@ class FledgePanel extends HTMLElement {
       glance: JSON.parse(JSON.stringify(t?.glance || { layout: "clock", hours: "auto", ampm: true, lines: {}, colour: true,
         night: { mode: "off", after: 30, before: 0, from: "22:00", until: "07:00", state: "on", layout: "analog", dim: true, lines: {} } })),
     };
+    // One calendar, from before there could be several.
+    const g = this._draft.glance;
+    if (!g.calendars) g.calendars = g.calendar ? [g.calendar] : [];
+    delete g.calendar;
+    if (g.night.level == null) g.night.level = 60;
     this._saved = this._fingerprint(this._draft);
     if (!keepSelection) this._sel = order.indexOf(THERMO);
     this._sel = Math.max(0, Math.min(this._sel, order.length - 1));
@@ -1469,7 +1518,8 @@ class FledgePanel extends HTMLElement {
       FACES.missing(f, "Glance", this._current.loaded ? "Drawing…" : "Fledge isn't running");
       return f.html();
     }
-    glanceFace(f, p.glance, p.lines, this._glanceNest(), Date.now() / 1000);
+    // A line with nothing to say takes no place: those after it close up.
+    glanceFace(f, p.glance, p.lines.filter((l) => l.text), this._glanceNest(), Date.now() / 1000);
     return f.html();
   }
 
@@ -1507,6 +1557,7 @@ class FledgePanel extends HTMLElement {
     const d = this._draft;
     const g = d.glance;
     if (line.source === "none") return "";
+    if (shown?.text && shown.instead) return `<p class="now"><span class="muted">Nothing to say now, so instead:</span> ${esc(shown.text)}</p>`;
     if (shown?.text) return `<p class="now"><span class="muted">Now:</span> ${esc(shown.text)}</p>`;
     const why = {
       playing: line.entity ? "It isn't playing now, so the line is empty." : this._entities().some((id) => id.startsWith("media_player."))
@@ -1514,13 +1565,14 @@ class FledgePanel extends HTMLElement {
       weather: d.weather ? "The weather entity isn't reporting." : "Choose a weather entity below.",
       forecast: d.weather ? "No forecast from this weather entity yet." : "Choose a weather entity below.",
       rain: d.weather ? "No hourly forecast from this weather entity." : "Choose a weather entity below.",
-      calendar: g.calendar ? "Nothing coming up in this calendar." : "Choose a calendar below.",
-      entity: line.entity ? "It isn't reporting now." : "Choose what it shows.",
+      calendar: g.calendars.length ? "Nothing coming up." : "Choose a calendar below.",
+      entity: !line.entity ? "Choose what it shows." : (line.when || "always") !== "always" ? "Not showing now: its state isn't the one asked for."
+        : "It isn't reporting now.",
       template: (line.template || "").trim() ? "The template gives nothing now." : "Write a template.",
       inside: "The thermostat isn't reporting its temperature.", heating: "The thermostat isn't reporting.",
       people: "Home Assistant has no people.", sun: "Home Assistant has no sun entity.",
     }[line.source];
-    return shown && why ? `<p class="now muted">${esc(why)}</p>` : "";
+    return shown && why ? `<p class="now muted">${esc(why)} The lines below move up.</p>` : "";
   }
 
   _glanceTab() {
@@ -1544,18 +1596,41 @@ class FledgePanel extends HTMLElement {
         `<optgroup label="${esc(group)}">${items.map(([k, label]) => `<option value="${k}" ${k === l.source ? "selected" : ""}>${esc(label)}</option>`).join("")}</optgroup>`).join("");
       let extra = "";
       if (l.source === "entity") {
+        const when = l.when || "always";
+        const valued = ["is", "is_not", "above", "below"].includes(when);
         extra = `<div class="split">${this._entityField(`gline${i}`, GLANCE_ENTITIES, "Shows", l.entity)}
-          <div class="field narrowfield"><label for="glabel${i}">Called</label><input id="glabel${i}" type="text" maxlength="40" placeholder="Its name" value="${esc(l.label || "")}" data-input="glabel" data-i="${i}"></div></div>`;
+          <div class="field narrowfield"><label for="glabel${i}">Called</label><input id="glabel${i}" type="text" maxlength="40" placeholder="Its name" value="${esc(l.label || "")}" data-input="glabel" data-i="${i}"></div></div>
+          <div class="split"><div class="field"><label for="gwhen${i}">Show it</label><select id="gwhen${i}" class="pick wide" data-input="gwhen" data-i="${i}">${GLANCE_WHENS.map(([k, label]) => `<option value="${k}" ${k === when ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
+          ${valued ? `<div class="field narrowfield"><label for="gvalue${i}">${when === "above" || when === "below" ? "Number" : "State"}</label><input id="gvalue${i}" type="text" maxlength="40" placeholder="${when === "above" || when === "below" ? "30" : "open"}" value="${esc(l.value || "")}" data-input="gvalue" data-i="${i}"></div>` : ""}</div>`;
       } else if (l.source === "playing") {
         extra = this._entityField(`gline${i}`, "media_player", "Speaker (none: whichever of your cards' speakers is playing)", l.entity);
       } else if (l.source === "template") {
         extra = `<div class="field"><label for="gtpl${i}">Template</label><textarea id="gtpl${i}" rows="2" maxlength="255" data-input="gtemplate" data-i="${i}" placeholder="{{ states('sensor.bin_day') }}">${esc(l.template || "")}</textarea></div>`;
       }
+      if (GLANCE_CAN_BE_EMPTY.includes(l.source)) {
+        const other = l.else || "none";
+        extra += `<div class="field"><label for="gelse${i}">With nothing to say, show</label><select id="gelse${i}" class="pick wide" data-input="gelse" data-i="${i}">${GLANCE_FALLBACKS.filter(([k]) => k !== l.source)
+          .map(([k, label]) => `<option value="${k}" ${k === other ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>`;
+      }
       return `<div class="gslot"><div class="field"><label for="gsrc${i}">${names[i]}</label><select id="gsrc${i}" class="pick wide" data-input="gsource" data-i="${i}">${options}</select></div>${extra}${this._glanceHint(l, shown?.lines[i])}</div>`;
     };
     const every = [...Object.values(g.lines), ...Object.values(n.lines), glanceLines(g.lines, g.layout, false), glanceLines(n.lines, n.layout, true)].flat();
-    const usesCalendar = g.layout === "agenda" || n.layout === "agenda" || every.some((l) => l?.source === "calendar");
-    const usesWeather = g.layout === "weather" || n.layout === "weather" || every.some((l) => ["weather", "forecast", "rain"].includes(l?.source));
+    const from = (sources) => every.some((l) => sources.includes(l?.source) || sources.includes(l?.else));
+    const usesCalendar = g.layout === "agenda" || n.layout === "agenda" || from(["calendar"]);
+    const usesWeather = g.layout === "weather" || n.layout === "weather" || from(["weather", "forecast", "rain"]);
+    const usesDate = g.layout === "agenda" || n.layout === "agenda" || from(["date", "date_short", "calendar"]);
+    const language = this._hass.language || "en";
+    const foreign = !language.toLowerCase().startsWith("en");
+    const words = foreign ? dateWords(language) : null;
+    const calendarFields = usesCalendar || g.calendars.length ? `${[...g.calendars, ""].slice(0, 6).map((id, i) =>
+      this._entityField(`gcal${i}`, "calendar", i === 0 ? "Calendar" : id ? "Calendar" : "Another calendar (optional)", id)).join("")}
+        <div class="kv flat"><span>Leave out all-day events<span class="sub">Birthdays, bin days and the like</span></span>${sw("gallday", g.skip_all_day, "Leave out all-day events")}</div>` : "";
+    const dateFields = usesDate ? `<div class="split"><div class="field"><label for="gdate">Date</label><select id="gdate" class="pick wide" data-input="gdate">
+          <option value="auto" ${g.date === "auto" ? "selected" : ""}>Automatic</option><option value="dmy" ${g.date === "dmy" ? "selected" : ""}>11 November</option>
+          <option value="mdy" ${g.date === "mdy" ? "selected" : ""}>November 11</option></select></div>
+        ${foreign ? `<div class="field"><label for="glang">Its words</label><select id="glang" class="pick wide" data-input="glang">
+          <option value="en" ${g.words ? "" : "selected"}>English</option>
+          <option value="${esc(language)}" ${g.words ? "selected" : ""} ${words ? "" : "disabled"}>${esc(languageName(language))}${words ? "" : " (not in the Nest's alphabet)"}</option></select></div>` : ""}</div>` : "";
     let extras = "";
     if (layout === "number") {
       extras = `${this._entityField("gbig", "sensor,input_number,number,counter", "The number", g.big)}
@@ -1563,7 +1638,7 @@ class FledgePanel extends HTMLElement {
         <div class="field"><label for="gbiglabel">Called</label><input id="gbiglabel" type="text" maxlength="40" placeholder="Its name" value="${esc(g.big_label || "")}" data-input="gbiglabel"></div>`;
     } else if (layout === "temp") {
       extras = `<div class="kv flat"><span>Colour the screen while heating or cooling<span class="sub">Orange or blue, as the Nest's own Farsight</span></span>${sw("gcolour", g.colour, "Colour the screen while heating or cooling")}</div>`;
-    } else if (layout === "agenda" && !g.calendar) {
+    } else if (layout === "agenda" && !g.calendars.length) {
       extras = `<p class="now muted">Choose a calendar below.</p>`;
     } else if (layout === "weather" && !d.weather) {
       extras = `<p class="now muted">Choose a weather entity below.</p>`;
@@ -1580,13 +1655,14 @@ class FledgePanel extends HTMLElement {
           <div class="field"><label for="gstate">Night while it's</label><select id="gstate" class="pick wide" data-input="gstate"><option value="on" ${n.state === "on" ? "selected" : ""}>On</option><option value="off" ${n.state === "off" ? "selected" : ""}>Off</option></select></div>
           ${n.entity ? "" : `<p class="now muted">Choose the sensor: until then it's always day.</p>`}` : ""}
         ${n.mode !== "off" ? `<div class="kv flat"><span>Dim and warm<span class="sub">Drawn darker and warmer, on top of the Nest's own brightness</span></span>${sw("gdim", n.dim, "Dim and warm")}</div>
+          ${n.dim ? `<div class="field"><label for="glevel">How bright it stays: <span id="glevelsaid">${esc(n.level)}</span>%</label><input id="glevel" type="range" min="20" max="100" step="5" value="${esc(n.level)}" data-input="glevel"></div>` : ""}
           <p class="now muted">${nightNow ? "By these settings it's night now." : "By these settings it's day now."}${n.mode === "sensor" ? " If the sensor is unavailable, it's day." : ""}</p>` : ""}`
       : `<p class="muted small nightline">${n.mode === "off" ? "At night: the same glance." : `At night: ${esc(layoutName(n.layout))}, ${esc(this._glanceNightWhen())}.`}
           <button class="btn text" data-act="gnight">${n.mode === "off" ? "Set up a night glance" : "Edit"}</button></p>`;
     return `<div class="cols glance">
       <section class="stage" aria-label="The glance as the Nest shows it">
         <span class="muted caps">On the Nest${night ? " · at night" : ""}</span>
-        <div class="bezel ${this._gview.far ? "far" : ""}"><div class="screen ${night && n.dim ? "dim" : ""}">${this._glanceScreen()}</div></div>
+        <div class="bezel ${this._gview.far ? "far" : ""}"><div class="screen ${night && n.dim ? "dim" : ""}" style="--lvl:${n.level / 100}">${this._glanceScreen()}</div></div>
         <div class="segs" role="group" aria-label="How far away">${seg("gnear", !this._gview.far, "Close up")}${seg("gfar", this._gview.far, "Across the room")}</div>
         <button class="btn ghost" data-act="gtry" ${t.loaded ? "" : "disabled"}><ha-icon icon="mdi:eye-outline"></ha-icon>Try on the Nest</button>
         <span class="muted small center">Shows this glance on the Nest for 20 seconds, without saving it.</span>
@@ -1600,7 +1676,7 @@ class FledgePanel extends HTMLElement {
         <div class="lays" role="radiogroup" aria-label="Layout">${layouts}</div>
         ${extras}
         <div class="head2"><h2>Lines</h2>${chosen[layout] ? `<button class="btn text" data-act="greset">Reset</button>` : ""}</div>
-        <p class="muted small">${lines.length === 1 ? `${esc(layoutName(layout))} has room for one line.` : `${esc(layoutName(layout))} has room for ${lines.length} lines, top to bottom.`} An empty line leaves its place blank.</p>
+        <p class="muted small">${lines.length === 1 ? `${esc(layoutName(layout))} has room for one line.` : `${esc(layoutName(layout))} has room for ${lines.length} lines, top to bottom.`} A line with nothing to say takes no room: the ones below move up.</p>
         ${lines.map(slot).join("")}
         <h2>For day and night</h2>
         <div class="field"><label for="ghours">Time format</label><select id="ghours" class="pick wide" data-input="ghours">
@@ -1608,7 +1684,9 @@ class FledgePanel extends HTMLElement {
           <option value="12" ${g.hours === "12" ? "selected" : ""}>12-hour</option><option value="24" ${g.hours === "24" ? "selected" : ""}>24-hour</option></select></div>
         ${(this._gpreview?.twelve ?? g.hours === "12") ? `<div class="kv flat"><span>Show AM / PM<span class="sub">Small, beside the time</span></span>${sw("gampm", g.ampm, "Show AM / PM")}</div>` : ""}
         ${usesWeather || d.weather ? this._entityField("weather", "weather", "Weather (also the Nest's own weather screen)", d.weather) : ""}
-        ${usesCalendar || g.calendar ? this._entityField("gcal", "calendar", "Calendar", g.calendar) : ""}
+        ${calendarFields}
+        ${dateFields}
+        ${t.protocol === 11 ? `<p class="now muted">The Nest's Fledge build is a little older than this panel: the date's words and order and how dim the night is wait for its update.</p>` : ""}
         <p class="muted small">Automations can change the day's layout with the Glance layout entity. Night glance says which one is up.</p>
       </section>
     </div>`;
@@ -1841,6 +1919,7 @@ class FledgePanel extends HTMLElement {
       case "gampm": d.glance.ampm = !d.glance.ampm; this._glanceSoon(); break;
       case "gcolour": d.glance.colour = !d.glance.colour; this._glanceSoon(); break;
       case "gdim": d.glance.night.dim = !d.glance.night.dim; this._glanceSoon(); break;
+      case "gallday": d.glance.skip_all_day = !d.glance.skip_all_day; this._glanceSoon(); break;
       case "select": this._sel = Number(el.dataset.i); break;
       case "turn": {
         const total = d.order.length;
@@ -2017,7 +2096,17 @@ class FledgePanel extends HTMLElement {
     const g = this._draft.glance;
     const n = g.night;
     const change = e.type === "change";
-    const typed = { glabel: "label", gtemplate: "template" };
+    if (what === "glevel") {
+      // As it slides: the preview and the number, the rest left alone.
+      n.level = Math.max(20, Math.min(100, Number(el.value) || 60));
+      this.shadowRoot.querySelector(".glance .bezel .screen")?.style.setProperty("--lvl", n.level / 100);
+      const said = this.shadowRoot.getElementById("glevelsaid");
+      if (said) said.textContent = n.level;
+      this._saveBarOnly();
+      if (change) this._glanceSoon();
+      return true;
+    }
+    const typed = { glabel: "label", gtemplate: "template", gvalue: "value" };
     if (typed[what]) {
       this._glanceLine(Number(el.dataset.i))[typed[what]] = el.value;
       if (change) this._glanceSoon();
@@ -2030,7 +2119,7 @@ class FledgePanel extends HTMLElement {
       else this._saveBarOnly();
       return true;
     }
-    if (!change) return ["ghours", "gsource", "gnmode", "gafter", "gbefore", "gfrom", "guntil", "gstate"].includes(what);
+    if (!change) return ["ghours", "gsource", "gnmode", "gafter", "gbefore", "gfrom", "guntil", "gstate", "gwhen", "gelse", "gdate", "glang"].includes(what);
     const minutes = (v) => Math.max(-180, Math.min(180, Math.round(Number(v)) || 0));
     switch (what) {
       case "ghours": g.hours = el.value; break;
@@ -2041,9 +2130,37 @@ class FledgePanel extends HTMLElement {
         delete line.entity;
         delete line.label;
         delete line.template;
+        delete line.when;
+        delete line.value;
+        if (line.else === el.value || !GLANCE_CAN_BE_EMPTY.includes(el.value)) delete line.else;
         break;
       }
       case "gnmode": n.mode = el.value; break;
+      case "gwhen": {
+        const line = this._glanceLine(Number(el.dataset.i));
+        if (el.value === "always") delete line.when;
+        else line.when = el.value;
+        if (!["is", "is_not", "above", "below"].includes(el.value)) delete line.value;
+        break;
+      }
+      case "gelse": {
+        const line = this._glanceLine(Number(el.dataset.i));
+        if (el.value === "none") delete line.else;
+        else line.else = el.value;
+        break;
+      }
+      case "gdate": g.date = el.value; break;
+      case "glang": {
+        const words = el.value === "en" ? null : dateWords(el.value);
+        if (words) {
+          g.words = words;
+          g.language = el.value;
+        } else {
+          delete g.words;
+          delete g.language;
+        }
+        break;
+      }
       case "gafter": n.after = minutes(el.value); break;
       case "gbefore": n.before = minutes(el.value); break;
       case "gfrom": if (/^\d\d:\d\d$/.test(el.value)) n.from = el.value; break;
@@ -2076,7 +2193,11 @@ class FledgePanel extends HTMLElement {
     if (key.startsWith("gline")) {
       this._glanceLine(Number(key.slice(5))).entity = value || null;
     } else if (key === "gbig") g.big = value || null;
-    else if (key === "gcal") g.calendar = value || null;
+    else if (key.startsWith("gcal")) {
+      const chosen = [...g.calendars];
+      chosen[Number(key.slice(4))] = value || "";
+      g.calendars = [...new Set(chosen.filter(Boolean))];
+    }
     else if (key === "gnight") g.night.entity = value || null;
     if (key.startsWith("g")) {
       this._render();
@@ -2292,7 +2413,8 @@ input:focus,.pick:focus{outline:none;border-bottom:2px solid var(--fl-primary)}
 .glance>.stage{flex:0 1 380px;position:sticky;top:12px}
 .bezel{transition:transform .45s cubic-bezier(.2,.8,.2,1),filter .45s}
 .bezel.far{transform:scale(.36);filter:blur(.5px)}
-.screen.dim{filter:brightness(.62) sepia(.45) saturate(1.3) hue-rotate(-10deg)}
+.screen.dim{filter:brightness(var(--lvl,.6)) sepia(.45) saturate(1.3) hue-rotate(-10deg)}
+input[type=range]{width:100%;accent-color:var(--fl-primary);min-height:32px}
 .lays{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:4px 0 8px}
 .lay{display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid var(--fl-line);border-radius:12px;padding:10px 6px;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:center;min-width:0}
 .lay.on{border-color:var(--fl-primary);background:rgba(var(--rgb-primary-color,3,169,244),.08)}

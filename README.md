@@ -121,12 +121,21 @@ saving:
   time, its temperature and humidity, its heating and time to temperature, the
   weather and what's on itself. Home Assistant sends today's high and low, when
   rain arrives, sunrise or sunset, what a speaker you choose is playing, your
-  next event, who's home, any entity's value (a door says Open, a timestamp
-  reads as a time), or a template. A sensor that changes every second reaches
-  the Nest at most every 15 seconds.
+  next event, who's home (first names), any entity's value (a door says Open, a
+  timestamp reads as a time), or a template. A sensor that changes every second
+  reaches the Nest at most every 15 seconds.
+  - A line with nothing to say takes no room: the lines below move up. Or give
+    it something to show instead (now playing, else what's on).
+  - An entity's line can show only while it matters: while it's on or off, in
+    (or not in) a state, or above or below a number.
+- **Date**: the day or the month first, and its words in Home Assistant's
+  language where that's written in the Latin alphabet.
+- **Calendars**: Up next and the next event's line look through the calendars
+  you choose for the next event that isn't over, and can leave out all-day ones.
 - **At night**: a different layout and lines, from sunset to sunrise (shifted
   by up to three hours), between set times, or while a sensor such as a bedtime
-  switch is on (or off), drawn dimmer and warmer if you like.
+  switch is on (or off), drawn dimmer and warmer if you like, as dim as you
+  choose. (This dims what's drawn; the Nest keeps its own backlight level.)
 
 The glance's layouts need the Nest on Fledge 0.9.0 or later; an older build
 shows the clock as before.
