@@ -206,6 +206,8 @@ def test_commands_reach_only_what_was_chosen_only_as_allowed():
     assert command({"id": "light.lamp", "action": "brightness", "value": 40}) == \
         cards.Call("light", "turn_on", "light.lamp", {"brightness_pct": 40})
     assert command({"id": "switch.fan", "action": "on"}) == cards.Call("homeassistant", "turn_on", "switch.fan", {})
+    assert command({"id": "light.lamp", "action": "on"}) == cards.Call("light", "turn_on", "light.lamp", {})
+    assert command({"id": "light.lamp", "action": "off"}) == cards.Call("light", "turn_off", "light.lamp", {})
     assert command({"id": "climate.utility", "action": "temperature", "value": 20.5}).data == {"temperature": 20.5}
     assert command({"id": "light.lamp", "action": "color_temp", "value": 2700}).data == {"color_temp_kelvin": 2700}
     assert command({"id": "light.lamp", "action": "hue", "value": 200}).data == {"hs_color": [200, 100]}

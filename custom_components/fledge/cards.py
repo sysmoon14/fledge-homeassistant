@@ -360,10 +360,13 @@ def command(payload: Mapping[str, Any], entities: Sequence[str],
         return None
     domain = _domain(entity)
     if domain in SWITCHED:
+        # A light goes through the light domain so integrations that act on
+        # light.turn_on (Adaptive Lighting, for one) see the call.
+        service_domain = "light" if domain == "light" else "homeassistant"
         if what == "off":
-            return Call("homeassistant", "turn_off", entity, {})
+            return Call(service_domain, "turn_off", entity, {})
         if what == "on":
-            return Call("homeassistant", "turn_on", entity, {})
+            return Call(service_domain, "turn_on", entity, {})
         if what == "brightness" and domain == "light" and 1 <= value <= 100:
             return Call("light", "turn_on", entity, {"brightness_pct": round(value)})
         if what == "color_temp" and domain == "light" and 1000 <= value <= 12000:
