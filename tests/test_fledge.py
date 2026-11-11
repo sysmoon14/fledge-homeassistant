@@ -141,12 +141,19 @@ def test_options_covers_presets_and_groups():
     assert command({"id": "cover.blind", "action": "position", "value": 300}) is None
 
 
-def test_an_air_conditioner_s_modes_fan_speeds_and_range():
+def test_an_air_conditioner_s_modes_fan_speeds_swings_and_range():
     ac = State("climate.ac", "cool", hvac_modes=["off", "cool", "heat", "dry", "fan_only", "heat_cool"],
-               fan_modes=["auto", "low", "high"], fan_mode="auto", temperature=22, preset_modes=["away", "boost"])
+               fan_modes=["auto", "low", "high"], fan_mode="auto", temperature=22,
+               preset_modes=["none", "away", "boost"], preset_mode="none",
+               swing_modes=["off", "swing"], swing_mode="off",
+               swing_horizontal_modes=["off", "swing", "left"], swing_horizontal_mode="swing")
     card = cards.climate(ac)
     assert (card["modes"], card["fan_modes"], card["fan_mode"], card["target"]) == \
         (["off", "cool", "heat", "dry", "fan_only", "heat_cool"], ["auto", "low", "high"], "auto", 22)
+    assert (card["presets"], card["preset_modes"]) == (["away", "boost"], ["none", "away", "boost"]), \
+        "its whole list too, none to leave a preset"
+    assert (card["swing_modes"], card["swing_mode"], card["swing_horizontal_modes"], card["swing_horizontal_mode"]) == \
+        (["off", "swing"], "off", ["off", "swing", "left"], "swing")
     states = {"climate.ac": ac}
     command = lambda payload: cards.command(payload, ["climate.ac"], states.get)
     assert command({"id": "climate.ac", "action": "hvac_mode", "option": "dry"}) == \
@@ -154,6 +161,12 @@ def test_an_air_conditioner_s_modes_fan_speeds_and_range():
     assert command({"id": "climate.ac", "action": "fan_mode", "option": "high"}).data == {"fan_mode": "high"}
     assert command({"id": "climate.ac", "action": "fan_mode", "option": "turbo"}) is None, "only its own speeds"
     assert command({"id": "climate.ac", "action": "hvac_mode", "option": "auto"}) is None, "only its own modes"
+    assert command({"id": "climate.ac", "action": "swing_mode", "option": "swing"}) == \
+        cards.Call("climate", "set_swing_mode", "climate.ac", {"swing_mode": "swing"})
+    assert command({"id": "climate.ac", "action": "swing_horizontal_mode", "option": "left"}) == \
+        cards.Call("climate", "set_swing_horizontal_mode", "climate.ac", {"swing_horizontal_mode": "left"})
+    assert command({"id": "climate.ac", "action": "swing_mode", "option": "top"}) is None, "only its own swings"
+    assert command({"id": "climate.ac", "action": "preset", "option": "none"}).data == {"preset_mode": "none"}
     assert cards.command({"id": "climate.ac", "action": "fan_mode", "option": "low"}, ["climate.ac"]) is None, \
         "not without its state"
     assert command({"id": "climate.ac", "action": "temperature", "value": 21}).data == {"temperature": 21}

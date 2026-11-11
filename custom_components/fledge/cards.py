@@ -6,7 +6,8 @@ model.rs); a command is what it sends on <base>/ui/command:
 
     {"id": "light.x", "action": "on" | "off" | "brightness" | "color_temp" | "hue"
                                 | "temperature" | "volume" | "play_pause", "value": <number>}
-    {"id": "climate.x", "action": "preset" | "hvac_mode" | "fan_mode", "option": "cool"}
+    {"id": "climate.x", "action": "preset" | "hvac_mode" | "fan_mode" | "swing_mode"
+                                | "swing_horizontal_mode", "option": "cool"}
     {"id": "alarm_control_panel.x", "action": "arm", "mode": "away", "code": "1234", "force": false}
     {"id": "alarm_control_panel.x", "action": "disarm", "code": "1234"}
 """
@@ -126,11 +127,17 @@ def climate(state: State) -> dict[str, Any]:
         "step": attributes.get("target_temp_step") or 0.5,
         "presets": [p for p in attributes.get("preset_modes") or [] if p != "none"][:4],
         "preset": attributes.get("preset_mode"),
-        # Its modes (heat, cool, dry, fan_only, off, ...) and fan speeds, for
-        # its menu (protocol 10 ignores them).
+        # Its modes (heat, cool, dry, fan_only, off, ...), fan speeds, presets
+        # (none among them) and swings, each a list off its menu (older
+        # Nest builds read only modes, fan speeds and `presets`).
         "modes": list(attributes.get("hvac_modes") or []),
         "fan_modes": list(attributes.get("fan_modes") or []),
         "fan_mode": attributes.get("fan_mode"),
+        "preset_modes": list(attributes.get("preset_modes") or []),
+        "swing_modes": list(attributes.get("swing_modes") or []),
+        "swing_mode": attributes.get("swing_mode"),
+        "swing_horizontal_modes": list(attributes.get("swing_horizontal_modes") or []),
+        "swing_horizontal_mode": attributes.get("swing_horizontal_mode"),
     }
 
 
@@ -380,7 +387,7 @@ def command(payload: Mapping[str, Any], entities: Sequence[str],
     named = isinstance(option, str) and 0 < len(option) <= 64
     if domain == "climate" and what == "preset" and named:
         return Call("climate", "set_preset_mode", entity, {"preset_mode": option})
-    if domain == "climate" and what in ("hvac_mode", "fan_mode") and named:
+    if domain == "climate" and what in ("hvac_mode", "fan_mode", "swing_mode", "swing_horizontal_mode") and named:
         state = get(entity)
         listed = (state.attributes.get(f"{what}s") or []) if state is not None else []
         if option in listed:
