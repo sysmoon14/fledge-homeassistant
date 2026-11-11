@@ -23,6 +23,8 @@
   const WATER = 'hot_water';
   const DAY_MIN = 1440;
   const UNDO_MS = 10000;
+  // How long a save waits for the Nest to show it before saying it didn't.
+  const CONFIRM_MS = 20000;
 
   const toMin = (s) => { const [h, m] = String(s).trim().split(':').map((x) => parseInt(x, 10)); return (h || 0) * 60 + (m || 0); };
   const hhmm = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
@@ -85,6 +87,10 @@
     if (!st || !DAYS.some((d) => Array.isArray(st.attributes[d]))) return null;
     return Object.fromEntries(DAYS.map((d) => [d, KIND[kind].read(st.attributes[d])]));
   };
+  // A day's list as a key, whatever its order: what's saved and what the
+  // sensor then shows compare equal (temperatures to the Nest's half degrees).
+  const norm = (list) => JSON.stringify([...(list || [])].sort((a, b) => (a.m ?? a.s) - (b.m ?? b.s))
+    .map((x) => ('m' in x ? [x.m, Math.round(x.t * 2) / 2] : [x.s, x.e])));
 
   // The setpoint at midnight: the last one before, however many days back.
   const carry = (week, i) => {
@@ -372,6 +378,7 @@
     .dchip .strip { position: relative; width: 26px; height: 5px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--secondary-text-color) 25%, transparent); }
     .dchip .strip .seg, .dchip .strip .blk { border-radius: 0; }
     .dchip .dot { position: absolute; top: 5px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--fs-accent); }
+    .dchip .dot.bad { background: var(--error-color, #c0392b); }
     .sub { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--secondary-text-color); margin: 14px 2px 8px; font-variant-numeric: tabular-nums; }
     .sub b { color: var(--primary-text-color); font-weight: 700; }
     .preview { position: relative; height: 22px; border-radius: 7px; overflow: hidden; background: var(--fs-inset); box-shadow: var(--fs-inset-shadow); }
@@ -453,7 +460,10 @@
       const pending = window.__fledgeScheduleEdit;
       if (pending && pending.entity === this._config.entity && pending.kind === this.kind) this._day = pending.day;
     }
-    disconnectedCallback() { window.removeEventListener('fledge-schedule-edit', this._onReq); clearTimeout(this._undoTimer); }
+    disconnectedCallback() {
+      window.removeEventListener('fledge-schedule-edit', this._onReq);
+      clearTimeout(this._undoTimer); clearTimeout(this._confirmTimer);
+    }
     set day(d) { this._day = d; }
     set hass(hass) {
       this._hass = hass;
@@ -466,18 +476,48 @@
     }
 
     _week() { return this._ids ? readWeek(this._hass, this._ids, this.kind) : null; }
+    // A day being edited: the week's list when it was opened (base, as a
+    // norm key), the edited list, and once saved, what was saved (pending)
+    // until the Nest's sensor shows it.
     _draft(week, d) {
-      if (!this._drafts[d]) this._drafts[d] = { base: JSON.stringify(week[d]), list: week[d].map((x) => ({ ...x })) };
+      if (!this._drafts[d]) this._drafts[d] = { base: norm(week[d]), list: week[d].map((x) => ({ ...x })) };
       return this._drafts[d].list;
     }
     _current(week, d) { return this._drafts[d] ? this._drafts[d].list : week[d]; }
     _dirty(week, d) {
       const dr = this._drafts[d];
       if (!dr) return false;
-      const sort = (l) => [...l].sort((a, b) => (a.m ?? a.s) - (b.m ?? b.s));
-      return !same(sort(dr.list), week[d]);
+      const now = norm(dr.list);
+      return now !== (dr.pending || norm(week[d]));
     }
+    _pending() { return DAYS.filter((d) => this._drafts[d] && this._drafts[d].pending); }
     _merged(week) { return Object.fromEntries(DAYS.map((d) => [d, this._current(week, d)])); }
+    // The changed days whose times the Nest won't take, with why.
+    _problems(week) {
+      return DAYS.filter((d) => this._dirty(week, d)).map((d) => [d, KIND[this.kind].problem(this._drafts[d].list)]).filter(([, p]) => p);
+    }
+
+    // Drafts the week has caught up with go: saved ones the Nest now shows
+    // (kept, if edited again since), and ones never edited, or edited to
+    // match, once the day changes under them.
+    _settle(week) {
+      let confirmed = false;
+      Object.keys(this._drafts).forEach((d) => {
+        const dr = this._drafts[d]; const now = norm(week[d]);
+        if (dr.pending) {
+          if (dr.pending !== now) return;
+          confirmed = true;
+          if (norm(dr.list) === now) delete this._drafts[d]; else { delete dr.pending; dr.base = now; }
+          return;
+        }
+        if (dr.base !== now && (norm(dr.list) === dr.base || norm(dr.list) === now)) delete this._drafts[d];
+      });
+      if (confirmed && !this._pending().length) {
+        clearTimeout(this._confirmTimer);
+        this._saved = Date.now();
+        setTimeout(() => this._render(true), 2100);
+      }
+    }
 
     // One call for every day given: {mon: [...]} in the editor's terms.
     _write(days) {
@@ -485,16 +525,35 @@
       return this._hass.callService('fledge', 'set_schedule', { entity_id: this._config.entity, [this.kind]: out });
     }
 
-    _run(promise, after) {
+    // Writes the days, then keeps them as drafts until the Nest shows them:
+    // the service only sends them on, so the editor shows what was saved
+    // meanwhile, and says so if the Nest never takes it.
+    _commit(week, days, after) {
       this._busy = true; this._error = ''; this._render(true);
-      return promise.then(() => { this._busy = false; this._saved = Date.now(); if (after) after(); this._render(true); setTimeout(() => this._render(true), 2100); })
-        .catch((err) => { this._busy = false; this._error = (err && err.message) || "Couldn't save"; this._render(true); });
+      return this._write(days).then(() => {
+        Object.entries(days).forEach(([d, l]) => {
+          const list = l.map((x) => ({ ...x }));
+          this._drafts[d] = { base: this._drafts[d] ? this._drafts[d].base : norm(week[d]), list, pending: norm(list) };
+        });
+        this._busy = false;
+        if (after) after();
+        clearTimeout(this._confirmTimer);
+        this._confirmTimer = setTimeout(() => {
+          const late = this._pending();
+          if (!late.length) return;
+          late.forEach((d) => delete this._drafts[d].pending);
+          this._error = `The Nest hasn't shown ${listDays(late)} yet. Is it online? Save again to retry.`;
+          this._render(true);
+        }, CONFIRM_MS);
+        this._render(true);
+      }).catch((err) => { this._busy = false; this._error = (err && err.message) || "Couldn't save"; this._render(true); });
     }
 
     _save(week) {
+      if (this._problems(week).length) return;
       const days = Object.fromEntries(DAYS.filter((d) => this._dirty(week, d)).map((d) => [d, this._drafts[d].list]));
       if (!Object.keys(days).length) return;
-      this._run(this._write(days), () => { Object.keys(days).forEach((d) => delete this._drafts[d]); });
+      this._commit(week, days);
     }
 
     _copy(week) {
@@ -503,9 +562,10 @@
       const source = this._current(week, from).map((x) => ({ ...x }));
       const days = Object.fromEntries(targets.map((d) => [d, source]));
       if (this._dirty(week, from)) days[from] = source;
-      const before = Object.fromEntries(Object.keys(days).map((d) => [d, week[d]]));
-      this._run(this._write(days), () => {
-        Object.keys(days).forEach((d) => delete this._drafts[d]);
+      // Undo puts back only the days copied to: the source day's own
+      // changes, saved with the copy, stay.
+      const before = Object.fromEntries(targets.map((d) => [d, week[d]]));
+      this._commit(week, days, () => {
         this._mode = 'edit';
         this._undo = { text: `Copied ${LONG[from]} to ${listDays(targets)}`, before };
         clearTimeout(this._undoTimer);
@@ -513,11 +573,11 @@
       });
     }
 
-    _undoCopy() {
+    _undoCopy(week) {
       const u = this._undo;
       if (!u) return;
       this._undo = null; clearTimeout(this._undoTimer);
-      this._run(this._write(u.before));
+      this._commit(week, u.before);
     }
 
     _render(force) {
@@ -526,8 +586,7 @@
       const sig = JSON.stringify([week, this._err]);
       if (!force && sig === this._sig) return;
       this._sig = sig;
-      // Drafts the week has caught up with (saved here or elsewhere) go.
-      if (week) Object.keys(this._drafts).forEach((d) => { if (this._drafts[d].base !== JSON.stringify(week[d]) && !this._dirty(week, d)) delete this._drafts[d]; });
+      if (week) this._settle(week);
       if (!this._day) this._day = DAYS[todayIdx()];
       const heat = this.kind === HEATING;
       let body;
@@ -540,21 +599,23 @@
 
     _chips(week) {
       const merged = this._merged(week);
+      const bad = new Set(this._problems(week).map(([d]) => d));
       return `<div class="days" role="tablist">${DAYS.map((d) => `
-        <button class="dchip${d === this._day ? ' on' : ''}" data-day="${d}" role="tab" aria-selected="${d === this._day}" aria-label="${LONG[d]}${this._dirty(week, d) ? ', changed' : ''}">
-          ${SHORT[d]}<span class="strip">${bars(this.kind, merged, d, { labels: false })}</span>${this._dirty(week, d) ? '<span class="dot"></span>' : ''}
+        <button class="dchip${d === this._day ? ' on' : ''}" data-day="${d}" role="tab" aria-selected="${d === this._day}" aria-label="${LONG[d]}${bad.has(d) ? ', needs fixing' : this._dirty(week, d) ? ', changed' : ''}">
+          ${SHORT[d]}<span class="strip">${bars(this.kind, merged, d, { labels: false })}</span>${this._dirty(week, d) ? `<span class="dot${bad.has(d) ? ' bad' : ''}"></span>` : ''}
         </button>`).join('')}</div>`;
     }
 
     _footer(week, problem) {
       const changed = DAYS.filter((d) => this._dirty(week, d));
-      const status = this._busy ? 'Saving…' : this._error ? esc(this._error)
+      const blocked = this._problems(week).length > 0;
+      const status = this._busy ? 'Saving…' : this._error ? esc(this._error) : this._pending().length ? 'Sending to the Nest…'
         : this._saved && Date.now() - this._saved < 2000 ? 'Saved' : changed.length > 1 ? `${changed.length} days changed` : '';
       const toast = this._undo ? `<div class="toast"><span>${esc(this._undo.text)}</span><button class="undo-copy">Undo</button></div>` : '';
       return `<div class="foot">
           <button class="btn to-copy"${this._busy || problem ? ' disabled' : ''}><ha-icon icon="${ICON.copy}"></ha-icon>Copy to…</button>
           <div class="status${this._error ? ' err' : ''}">${status}</div>
-          <button class="btn${changed.length ? ' primary' : ''} save"${changed.length && !this._busy && !problem ? '' : ' disabled'}>${changed.length > 1 ? `Save ${changed.length} days` : 'Save'}</button>
+          <button class="btn${changed.length ? ' primary' : ''} save"${changed.length && !this._busy && !blocked ? '' : ' disabled'}>${changed.length > 1 ? `Save ${changed.length} days` : 'Save'}</button>
         </div>${changed.length ? '<button class="btn ghost wide undo-all" style="margin-top:6px;height:32px;font-size:13px">Discard changes</button>' : ''}${toast}`;
     }
 
@@ -563,6 +624,9 @@
       const list = this._draft(week, d);
       const merged = this._merged(week);
       const problem = KIND[this.kind].problem(list);
+      // Another changed day the Nest won't take holds up Save too.
+      const other = problem ? null : this._problems(week).find(([x]) => x !== d);
+      const shown = problem || (other ? `${LONG[other[0]]}: ${other[1]}` : '');
       let rows;
       if (heat) {
         const clim = this._hass.states[this._config.entity];
@@ -595,7 +659,7 @@
         <div class="preview">${bars(this.kind, merged, d)}</div>${AXIS}
         <div class="list">${rows || `<div class="hint">${heat ? 'No changes: it stays at the temperature from the day before.' : 'Off all day.'}</div>`}</div>
         <button class="add"><ha-icon icon="${ICON.add}"></ha-icon>${heat ? 'Add a change' : 'Add hot water time'}</button>
-        ${problem ? `<div class="problem">${esc(problem)}</div>` : ''}
+        ${shown ? `<div class="problem">${esc(shown)}</div>` : ''}
         ${this._footer(week, problem)}`;
     }
 
@@ -649,7 +713,7 @@
       const all = sr.querySelector('.undo-all');
       if (all) all.addEventListener('click', () => { this._drafts = {}; re(); });
       const u = sr.querySelector('.undo-copy');
-      if (u) u.addEventListener('click', () => this._undoCopy());
+      if (u) u.addEventListener('click', () => this._undoCopy(week));
     }
 
     _copyView(week) {
