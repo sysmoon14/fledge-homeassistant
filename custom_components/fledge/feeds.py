@@ -142,8 +142,12 @@ def acts_as_thermostat(hass: HomeAssistant, serial: str) -> bool:
 class Feeds:
     """One Nest's weather and room readings, kept sent."""
 
-    def __init__(self, hass: HomeAssistant, serial: str, options: dict[str, Any]) -> None:
+    def __init__(self, hass: HomeAssistant, serial: str, options: dict[str, Any], forecasts_changed: Any = None) -> None:
         self.hass = hass
+        # The latest forecasts, for the glance's lines, and who's told.
+        self.hourly: list[dict] = []
+        self.daily: list[dict] = []
+        self._forecasts_changed = forecasts_changed
         self.serial = serial
         self.weather: str | None = options.get(CONF_WEATHER)
         self.thermometer: str | None = options.get(CONF_OUTDOOR)
@@ -213,6 +217,10 @@ class Feeds:
         features = int(weather.attributes.get("supported_features") or 0)
         hourly = await self._forecasts("hourly") if features & HOURLY else []
         daily = await self._forecasts("daily" if features & DAILY else "twice_daily")
+        if (hourly, daily) != (self.hourly, self.daily):
+            self.hourly, self.daily = hourly, daily
+            if self._forecasts_changed is not None:
+                self._forecasts_changed()
         payload = json.dumps(forecast(weather, self.hass.states.get("sun.sun"), hourly, daily),
                              separators=(",", ":"), default=str)
         await self._publish(self._topic(WEATHER_TOPIC), payload, retain=True)

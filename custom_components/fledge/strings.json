@@ -141,6 +141,9 @@
       },
       "close_up": {
         "name": "Close up"
+      },
+      "glance_layout": {
+        "name": "Glance layout"
       }
     },
     "switch": {
@@ -159,6 +162,11 @@
       },
       "hot_water_today": {
         "name": "Hot water today"
+      }
+    },
+    "binary_sensor": {
+      "night_glance": {
+        "name": "Night glance"
       }
     }
   },

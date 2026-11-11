@@ -102,10 +102,32 @@ thermostat's own, with:
 | `select` **Wake to** | What the thermostat shows as it wakes: the device chooser, **Automatic** (the speaker that's playing, else after sunset a light that's on, else the chooser), the thermostat as the Nest always did, or any of your devices. |
 | `switch` **Keep screen on** | Keeps the thermostat's display lit. |
 | `button` **Wake screen** | Lights the display onto what it wakes to. |
+| `select` **Glance layout** | The glance's layout: Clock, Temperature, Weather, Analog, Big number or Up next. Each keeps the lines you chose for it. |
+| `binary_sensor` **Night glance** | On while the Nest shows the glance's night layout. |
 
 In **Configure**, **A glance as someone comes near** makes the Nest, when it
 lights up because you walked up (not a touch), show the time, the weather (from
 a weather entity you pick) and what's on; a touch shows what it wakes to.
+
+The panel's **Glance** tab chooses what the glance shows, with a preview of the
+Nest's screen and **Try on the Nest** to see it for real for 20 seconds before
+saving:
+
+- **Layout**: the time large (Clock), the room's temperature (Temperature,
+  orange or blue while heating or cooling), the weather outside, a clock face
+  (Analog), one sensor's value (Big number) or your next calendar event (Up next).
+- **Clock**: 12 or 24 hours, or Automatic from where Home Assistant is, and AM / PM.
+- **Lines**: up to three under the big element. The Nest works out the date, the
+  time, its temperature and humidity, its heating and time to temperature, the
+  weather and what's on itself. Home Assistant sends today's high and low, when
+  rain arrives, sunrise or sunset, what's playing, your next event, who's home,
+  any entity's value, or a template.
+- **At night**: a different layout and lines, from sunset to sunrise (shifted
+  by up to three hours), between set times, or while a sensor such as a bedtime
+  switch is on (or off), drawn dimmer and warmer if you like.
+
+The glance's layouts need the Nest on Fledge 0.9.0 or later; an older build
+shows the clock as before.
 
 So the thermostat can show what matters right now, for example the speaker
 while music plays, and the device chooser otherwise:

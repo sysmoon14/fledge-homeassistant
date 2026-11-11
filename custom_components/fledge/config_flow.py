@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from .const import (CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+from .const import (CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
                     CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
                     NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
@@ -86,7 +86,7 @@ def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None
         options[CONF_DIM_OFF] = False
     if user_input.get(CONF_SHOW_THERMOSTAT) is False:
         options[CONF_SHOW_THERMOSTAT] = False
-    for key in (CONF_WEATHER, CONF_OUTDOOR, CONF_ROOM_SENSOR):
+    for key in (CONF_WEATHER, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_GLANCE_SETTINGS):
         if user_input.get(key):
             options[key] = user_input[key]
     place = user_input.get(CONF_THERMOSTAT)
@@ -169,7 +169,10 @@ class FledgeOptionsFlow(OptionsFlow):
             names = self.config_entry.options.get(CONF_NAMES)
             place = self.config_entry.options.get(CONF_THERMOSTAT)
             alarms = self.config_entry.options.get(CONF_ALARMS)
-            return self.async_create_entry(data=options_from({**user_input, CONF_THERMOSTAT: place}, names, alarms))
+            # The glance's settings are the panel's too.
+            glance = self.config_entry.options.get(CONF_GLANCE_SETTINGS)
+            return self.async_create_entry(data=options_from({**user_input, CONF_THERMOSTAT: place,
+                                                              CONF_GLANCE_SETTINGS: glance}, names, alarms))
         serial = self.config_entry.data[CONF_SERIAL]
         return self.async_show_form(step_id="init",
                                     data_schema=_cards_schema(self.hass, serial, dict(self.config_entry.options)))
