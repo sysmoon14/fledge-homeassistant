@@ -25,5 +25,5 @@
   "mqtt": [
     "nestlocal/+/availability"
   ],
-  "version": "0.18.0-rc.2"
+  "version": "0.18.0-rc.3"
 }
