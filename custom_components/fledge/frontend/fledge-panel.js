@@ -90,6 +90,8 @@ const GLANCE_SAMPLES = {
   playing: ["Dreams · Fleetwood Mac", "mdi:play"], calendar: ["16:30 Dentist", "mdi:calendar"],
   people: ["Alex home", "mdi:account"], entity: ["Electricity 24.3 p/kWh", "mdi:flash"], template: ["Your words"],
 };
+// What a line (or the night) can follow.
+const GLANCE_ENTITIES = "sensor,binary_sensor,input_number,input_text,input_boolean,input_datetime,counter,number,select,input_select,person,device_tracker,climate,weather,sun,lock,cover,timer,alarm_control_panel";
 const GLANCE_QUIET = [196, 203, 211];
 const FLEDGE_ON = [255, 211, 154];
 const GLANCE_NIGHT = [["off", "Never: the same glance all day"], ["sun", "Sunset to sunrise"], ["hours", "Between set times"],
@@ -635,6 +637,9 @@ function glanceFace(f, g, lines, nest, now) {
   const digits = f.font("digits");
   const raw = (x, y, s, size, c, { weight = 300, spacing = 0, anchor = "middle", font = digits } = {}) =>
     f.svg.push(`<text x="${r1(x)}" y="${r1(y)}" text-anchor="${anchor}" font-family="${font}" font-size="${r1(size)}" font-weight="${weight}"${spacing ? ` letter-spacing="${spacing}"` : ""} fill="${css(c)}">${s}</text>`);
+  // A small label over something large (screens::glance_label).
+  const label = (y, s) => (f.fledge ? f.text(240, y, s, 22, { weight: 500, spacing: 1, c: GLANCE_QUIET, max: 300 })
+    : f.text(240, y, String(s).toUpperCase(), 20, { weight: 500, spacing: 3, c: GLANCE_QUIET, max: 300 }));
   // Large words shrunk to fit `room`, as hero and big_time do.
   const sized = (s, size, room, spacing = -3) => Math.min(size, size * room / Math.max(1, estimate(s, size, spacing) * 0.92));
   if (layout === "clock") {
@@ -645,7 +650,7 @@ function glanceFace(f, g, lines, nest, now) {
     const tail = half ? `<tspan font-family="${f.font("regular")}" font-weight="500" font-size="${r1(size * 0.2)}" letter-spacing="1" dx="10" fill="${css(GLANCE_QUIET)}">${half}</tspan>` : "";
     raw(240, 236, `${esc(time)}${tail}`, size, N.WHITE, { spacing: -3 });
   } else if (layout === "temp") {
-    f.text(240, 150, f.fledge ? "Inside" : "INSIDE", 22, { weight: 500, spacing: 2, c: coloured ? [255, 232, 218] : GLANCE_QUIET });
+    f.text(240, 150, f.fledge ? "Inside" : "INSIDE", 22, { weight: 500, spacing: f.fledge ? 1 : 2, c: coloured ? [255, 232, 218] : GLANCE_QUIET });
     if (nest?.current != null) {
       const value = nest.fahrenheit ? Math.round(nest.current) : Math.round(nest.current * 2) / 2;
       f.big(value, !nest.fahrenheit, "");
@@ -670,26 +675,50 @@ function glanceFace(f, g, lines, nest, now) {
     }
   } else if (layout === "number") {
     const big = g.big || {};
-    f.text(240, 132, String(big.label || "").toUpperCase(), 20, { weight: 500, spacing: 3, c: GLANCE_QUIET, max: 300 });
+    label(132, big.label || "");
     const value = String(big.value || "").trim() || "–";
     raw(240, 270, esc(value), sized(value, f.fledge ? 170 : 140, 400), N.WHITE, { weight: f.fledge ? 200 : 300, spacing: -3 });
     if (big.unit) f.text(240, 316, big.unit, 28, { c: FLEDGE_ON, max: 280 });
   } else if (layout === "agenda") {
     raw(240, 122, esc(glanceTime(minutes, twelve, ampm)), 56, N.WHITE, { spacing: -1 });
-    f.text(240, 178, "UP NEXT", 18, { weight: 500, spacing: 3, c: GLANCE_QUIET });
+    label(178, "Up next");
     if (g.event?.title) {
       const title = g.event.title.trim();
       f.text(240, 250, title, Math.max(40, Math.min(64, 64 * 380 / Math.max(1, estimate(title, 64, 0)))), { weight: 500, max: 380 });
       f.text(240, 300, glanceWhen(g.event, g, now), 28, { c: FLEDGE_ON, max: 340 });
     } else f.text(240, 250, "Nothing coming up", 40, { weight: 500 });
   }
+  if (layout === "analog") {
+    const h = (minutes % 720) / 60;
+    const m = minutes % 60;
+    const hand = (deg, length, width) => {
+      const [x1, y1] = onCircle(deg + 180, 18);
+      const [x2, y2] = onCircle(deg, length);
+      f.svg.push(`<line x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}" stroke="#fff" stroke-width="${width}" stroke-linecap="round"/>`);
+    };
+    hand(h * 30, 112, 11);
+    hand(m * 6, 170, 6);
+    f.svg.push(`<circle cx="240" cy="240" r="9" fill="${css(FLEDGE_ON)}"/>`);
+  }
   const places = GLANCE_PLACES[layout] || GLANCE_PLACES.clock;
-  places.forEach(([y, style, room], i) => {
+  places.forEach(([y0, style, room], i) => {
     const line = lines[i];
     if (!line?.text) return;
+    // The analog clock's line keeps clear of the hands (screens::analog_line).
+    let y = y0;
+    if (layout === "analog") {
+      const hands = [(minutes % 720) / 2, (minutes % 60) * 6];
+      if (hands.some((a) => a >= 130 && a <= 230) && !hands.some((a) => a >= 310 || a <= 50)) y = 152;
+    }
     let c = line.icon === "mdi:fire" ? [255, 154, 92] : line.icon === "mdi:snowflake" ? [130, 178, 255] : null;
+    if (layout === "analog") {
+      // On a plate over the hands, as a watch's date window.
+      const width = Math.min(room, estimate(line.text, 30, 0) * 0.95) + 36;
+      f.pill(240 - width / 2, y - 30 * 0.36 - 23, width, 46, f.fledge ? N.FACE : N.BLACK, 0.82);
+    }
     if (style === "quiet") {
-      f.text(240, y, line.text, 30, { c: coloured ? [255, 232, 218] : c || GLANCE_QUIET, max: room });
+      const size = Math.max(26, Math.min(30, 30 * room / Math.max(1, estimate(line.text, 30, 0))));
+      f.text(240, y, line.text, size, { c: coloured ? [255, 232, 218] : c || GLANCE_QUIET, max: room });
     } else if (style === "main") {
       c = coloured ? N.WHITE : c || N.WHITE;
       const iconRoom = line.icon ? 56 : 0;
@@ -711,18 +740,6 @@ function glanceFace(f, g, lines, nest, now) {
       f.text(left + 23 * 0.95 + iconRoom, y + 23 * 0.36, text, 23, { weight: 500, c, anchor: "start", max: room });
     }
   });
-  if (layout === "analog") {
-    const h = (minutes % 720) / 60;
-    const m = minutes % 60;
-    const hand = (deg, length, width) => {
-      const [x1, y1] = onCircle(deg + 180, 18);
-      const [x2, y2] = onCircle(deg, length);
-      f.svg.push(`<line x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}" stroke="#fff" stroke-width="${width}" stroke-linecap="round"/>`);
-    };
-    hand(h * 30, 112, 11);
-    hand(m * 6, 170, 6);
-    f.svg.push(`<circle cx="240" cy="240" r="9" fill="${css(FLEDGE_ON)}"/>`);
-  }
 }
 
 const THERMO = "@thermostat";
@@ -1399,12 +1416,11 @@ class FledgePanel extends HTMLElement {
   // The glance: its layout and lines, day and night, previewed as the Nest
   // draws it from what Home Assistant would send it now.
 
-  // The lines being edited: the night's while the preview shows night.
+  // What's being edited and previewed: the day's glance or the night's.
   _glanceEditing() {
     const g = this._draft.glance;
-    const night = this._gview.night && g.night.mode !== "off";
-    const layout = night ? g.night.layout : g.layout;
-    return { night, layout, chosen: night ? g.night.lines : g.lines };
+    const night = this._gview.night;
+    return { night, layout: night ? g.night.layout : g.layout, chosen: night ? g.night.lines : g.lines };
   }
 
   _glanceSoon() {
@@ -1412,16 +1428,23 @@ class FledgePanel extends HTMLElement {
     this._gtimer = setTimeout(() => this._glanceRefresh(), 250);
   }
 
+  // The preview from Home Assistant; drawn again only if it changed (or the
+  // minute did), so an open list or a field being typed in is left alone.
   async _glanceRefresh() {
     const t = this._current;
     if (!t?.loaded || !this._draft) return;
     const { night } = this._glanceEditing();
+    let key = this._gkey;
     try {
       this._gpreview = await this._hass.callWS({ type: "fledge/glance_preview", entry_id: t.entry_id, glance: this._draft.glance,
         night, weather: this._draft.weather || null, entities: this._entities() });
+      key = `${JSON.stringify(this._gpreview)} ${Math.floor(Date.now() / 60000)}`;
     } catch (err) {
       this._error = err?.message || String(err);
+      key = `error ${this._error}`;
     }
+    if (key === this._gkey) return;
+    this._gkey = key;
     if (this._tab === "glance") this._render();
   }
 
@@ -1432,11 +1455,17 @@ class FledgePanel extends HTMLElement {
     return { current: climate.attributes.current_temperature, action: climate.attributes.hvac_action, fahrenheit: unit.includes("F") };
   }
 
+  // The preview for what's being edited, once it has come.
+  _glanceShown() {
+    const p = this._gpreview;
+    const { night, layout } = this._glanceEditing();
+    return p && p.glance.layout === layout && !!p.glance.night === night ? p : null;
+  }
+
   _glanceScreen() {
     const f = new Face(this._look === "fledge");
-    const p = this._gpreview;
-    const { layout } = this._glanceEditing();
-    if (!p || p.glance.layout !== layout) {
+    const p = this._glanceShown();
+    if (!p) {
       FACES.missing(f, "Glance", this._current.loaded ? "Drawing…" : "Fledge isn't running");
       return f.html();
     }
@@ -1445,33 +1474,69 @@ class FledgePanel extends HTMLElement {
   }
 
   // A layout's thumbnail, from sample words for the lines chosen for it.
-  _glanceThumb(layout) {
+  _glanceThumb(layout, night) {
     const f = new Face(this._look === "fledge");
     const g = this._draft.glance;
-    const twelve = this._gpreview?.twelve ?? false;
-    const lines = glanceLines(g.lines, layout, false).map((l) => {
+    const twelve = this._gpreview?.twelve ?? g.hours === "12";
+    const lines = glanceLines(night ? g.night.lines : g.lines, layout, night).map((l) => {
       const [text, icon] = GLANCE_SAMPLES[l.source] || [""];
-      return { text, icon };
+      return { text: l.source === "time" ? glanceTime(845, twelve, g.ampm) : text, icon };
     });
+    const now = new Date();
+    const at = Math.floor(Date.UTC(2026, 0, 1, now.getHours(), now.getMinutes()) / 1000);
     const sample = { layout, clock: { hours: twelve ? 12 : 24, ampm: g.ampm }, offset: 0, colour: g.colour,
       weather: { condition: "partlycloudy", temperature: 9 }, big: { label: "Electricity", value: "24.3", unit: "p/kWh" },
-      event: { title: "Dentist", start: Math.floor(Date.now() / 1000) + 7200, all_day: false } };
-    const now = new Date();
-    glanceFace(f, sample, lines, { current: 20.5, action: "heating" }, Math.floor(Date.UTC(2026, 0, 1, now.getHours(), now.getMinutes()) / 1000));
+      event: { title: "Dentist", start: at + 7200, all_day: false } };
+    glanceFace(f, sample, lines, { current: 20.5, action: "heating" }, at);
     return f.html();
+  }
+
+  // When the night's glance shows, in a few words.
+  _glanceNightWhen() {
+    const n = this._draft.glance.night;
+    const twelve = this._gpreview?.twelve ?? this._draft.glance.hours === "12";
+    const clock = (hhmm) => glanceTime(Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3)), twelve, true);
+    if (n.mode === "sun") return "from sunset to sunrise";
+    if (n.mode === "hours") return `from ${clock(n.from)} to ${clock(n.until)}`;
+    if (n.mode === "sensor") return n.entity ? `while ${this._hass.states[n.entity]?.attributes.friendly_name || n.entity} is ${n.state}` : "while a sensor says so";
+    return "";
+  }
+
+  // Under a line's choice: what it says now, or why it says nothing.
+  _glanceHint(line, shown) {
+    const d = this._draft;
+    const g = d.glance;
+    if (line.source === "none") return "";
+    if (shown?.text) return `<p class="now"><span class="muted">Now:</span> ${esc(shown.text)}</p>`;
+    const why = {
+      playing: line.entity ? "It isn't playing now, so the line is empty." : this._entities().some((id) => id.startsWith("media_player."))
+        ? "None of your cards' speakers is playing now, so the line is empty." : "Choose a speaker: none of your cards is one.",
+      weather: d.weather ? "The weather entity isn't reporting." : "Choose a weather entity below.",
+      forecast: d.weather ? "No forecast from this weather entity yet." : "Choose a weather entity below.",
+      rain: d.weather ? "No hourly forecast from this weather entity." : "Choose a weather entity below.",
+      calendar: g.calendar ? "Nothing coming up in this calendar." : "Choose a calendar below.",
+      entity: line.entity ? "It isn't reporting now." : "Choose what it shows.",
+      template: (line.template || "").trim() ? "The template gives nothing now." : "Write a template.",
+      inside: "The thermostat isn't reporting its temperature.", heating: "The thermostat isn't reporting.",
+      people: "Home Assistant has no people.", sun: "Home Assistant has no sun entity.",
+    }[line.source];
+    return shown && why ? `<p class="now muted">${esc(why)}</p>` : "";
   }
 
   _glanceTab() {
     const d = this._draft;
     const g = d.glance;
+    const n = g.night;
     const t = this._current;
     const { night, layout, chosen } = this._glanceEditing();
+    const shown = this._glanceShown();
     const old = t.protocol != null && t.protocol < 11;
-    const off = !["glance"].includes(d.far) && !["glance"].includes(d.near);
-    const seg = (act, on, label, extra = "") => `<button class="seg ${on ? "on" : ""}" data-act="${act}" aria-pressed="${on}" ${extra}>${label}</button>`;
+    const unshown = d.far !== "glance" && d.near !== "glance";
+    const seg = (act, on, label) => `<button class="seg ${on ? "on" : ""}" data-act="${act}" aria-pressed="${on}">${label}</button>`;
     const sw = (act, on, label) => this._switch(act, on, label);
-    const layouts = GLANCE_LAYOUTS.map(([k, name, sub]) => `<button class="lay ${k === g.layout ? "on" : ""}" role="radio" aria-checked="${k === g.layout}" data-act="glayout" data-k="${k}">
-        <span class="thumb"><span class="screen">${this._glanceThumb(k)}</span></span><span class="name">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`).join("");
+    const layoutName = (k) => GLANCE_LAYOUTS.find(([key]) => key === k)[1];
+    const layouts = GLANCE_LAYOUTS.map(([k, name, sub]) => `<button class="lay ${k === layout ? "on" : ""}" role="radio" aria-checked="${k === layout}" data-act="glayout" data-k="${k}">
+        <span class="thumb"><span class="screen">${this._glanceThumb(k, night)}</span></span><span class="name">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`).join("");
     const names = ["First line", "Second line", "Third line"];
     const lines = glanceLines(chosen, layout, night);
     const slot = (l, i) => {
@@ -1479,60 +1544,72 @@ class FledgePanel extends HTMLElement {
         `<optgroup label="${esc(group)}">${items.map(([k, label]) => `<option value="${k}" ${k === l.source ? "selected" : ""}>${esc(label)}</option>`).join("")}</optgroup>`).join("");
       let extra = "";
       if (l.source === "entity") {
-        extra = `<div class="split">${this._entityField(`gline${i}`, "sensor,binary_sensor,input_number,input_text,input_boolean,counter,number,select,input_select,person,device_tracker,climate,weather", "Entity", l.entity)}
-          <div class="field narrowfield"><label for="glabel${i}">Label</label><input id="glabel${i}" type="text" maxlength="40" placeholder="Its name" value="${esc(l.label || "")}" data-input="glabel" data-i="${i}"></div></div>`;
+        extra = `<div class="split">${this._entityField(`gline${i}`, GLANCE_ENTITIES, "Shows", l.entity)}
+          <div class="field narrowfield"><label for="glabel${i}">Called</label><input id="glabel${i}" type="text" maxlength="40" placeholder="Its name" value="${esc(l.label || "")}" data-input="glabel" data-i="${i}"></div></div>`;
+      } else if (l.source === "playing") {
+        extra = this._entityField(`gline${i}`, "media_player", "Speaker (none: whichever of your cards' speakers is playing)", l.entity);
       } else if (l.source === "template") {
         extra = `<div class="field"><label for="gtpl${i}">Template</label><textarea id="gtpl${i}" rows="2" maxlength="255" data-input="gtemplate" data-i="${i}" placeholder="{{ states('sensor.bin_day') }}">${esc(l.template || "")}</textarea></div>`;
-      } else if (l.source === "calendar" && !g.calendar) {
-        extra = `<p class="muted small">Choose the calendar below.</p>`;
       }
-      return `<div class="gslot"><div class="field"><label for="gsrc${i}">${names[i]}</label><select id="gsrc${i}" class="pick wide" data-input="gsource" data-i="${i}">${options}</select></div>${extra}</div>`;
+      return `<div class="gslot"><div class="field"><label for="gsrc${i}">${names[i]}</label><select id="gsrc${i}" class="pick wide" data-input="gsource" data-i="${i}">${options}</select></div>${extra}${this._glanceHint(l, shown?.lines[i])}</div>`;
     };
-    const usesCalendar = layout === "agenda" || g.layout === "agenda" || g.night.layout === "agenda"
-      || [...Object.values(g.lines), ...Object.values(g.night.lines)].flat().some((l) => l?.source === "calendar");
-    const n = g.night;
-    const nightBody = n.mode === "off" ? "" : `
-        ${n.mode === "sun" ? `<div class="split"><div class="field narrowfield"><label for="gafter">Minutes after sunset</label><input id="gafter" type="number" min="-180" max="180" value="${esc(n.after)}" data-input="gafter"></div>
-          <div class="field narrowfield"><label for="gbefore">Minutes before sunrise</label><input id="gbefore" type="number" min="-180" max="180" value="${esc(n.before)}" data-input="gbefore"></div></div>` : ""}
-        ${n.mode === "hours" ? `<div class="split"><div class="field narrowfield"><label for="gfrom">From</label><input id="gfrom" type="time" value="${esc(n.from)}" data-input="gfrom"></div>
-          <div class="field narrowfield"><label for="guntil">Until</label><input id="guntil" type="time" value="${esc(n.until)}" data-input="guntil"></div></div>` : ""}
-        ${n.mode === "sensor" ? `${this._entityField("gnight", "binary_sensor,input_boolean", "Sensor (a bedtime switch, say)", n.entity)}
+    const every = [...Object.values(g.lines), ...Object.values(n.lines), glanceLines(g.lines, g.layout, false), glanceLines(n.lines, n.layout, true)].flat();
+    const usesCalendar = g.layout === "agenda" || n.layout === "agenda" || every.some((l) => l?.source === "calendar");
+    const usesWeather = g.layout === "weather" || n.layout === "weather" || every.some((l) => ["weather", "forecast", "rain"].includes(l?.source));
+    let extras = "";
+    if (layout === "number") {
+      extras = `${this._entityField("gbig", "sensor,input_number,number,counter", "The number", g.big)}
+        ${g.big ? "" : `<p class="now muted">Choose a sensor with a number: a price, a power, a battery.</p>`}
+        <div class="field"><label for="gbiglabel">Called</label><input id="gbiglabel" type="text" maxlength="40" placeholder="Its name" value="${esc(g.big_label || "")}" data-input="gbiglabel"></div>`;
+    } else if (layout === "temp") {
+      extras = `<div class="kv flat"><span>Colour the screen while heating or cooling<span class="sub">Orange or blue, as the Nest's own Farsight</span></span>${sw("gcolour", g.colour, "Colour the screen while heating or cooling")}</div>`;
+    } else if (layout === "agenda" && !g.calendar) {
+      extras = `<p class="now muted">Choose a calendar below.</p>`;
+    } else if (layout === "weather" && !d.weather) {
+      extras = `<p class="now muted">Choose a weather entity below.</p>`;
+    }
+    const nightNow = this._gpreview?.night_now;
+    const when = night ? `<h2>When it's night</h2>
+        <div class="field"><label for="gnmode">Night is</label><select id="gnmode" class="pick wide" data-input="gnmode">${GLANCE_NIGHT.map(([k, label]) => `<option value="${k}" ${k === n.mode ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
+        ${n.mode === "off" ? `<p class="now muted">The Nest shows the day's glance all the time. Choose when night is to use this one.</p>` : ""}
+        ${n.mode === "sun" ? `<div class="split"><div class="field"><label for="gafter">Minutes after sunset</label><input id="gafter" type="number" min="-180" max="180" value="${esc(n.after)}" data-input="gafter"></div>
+          <div class="field"><label for="gbefore">Minutes before sunrise</label><input id="gbefore" type="number" min="-180" max="180" value="${esc(n.before)}" data-input="gbefore"></div></div>` : ""}
+        ${n.mode === "hours" ? `<div class="split"><div class="field"><label for="gfrom">From</label><input id="gfrom" type="time" value="${esc(n.from)}" data-input="gfrom"></div>
+          <div class="field"><label for="guntil">Until</label><input id="guntil" type="time" value="${esc(n.until)}" data-input="guntil"></div></div>` : ""}
+        ${n.mode === "sensor" ? `${this._entityField("gnight", "binary_sensor,input_boolean,switch,schedule", "Sensor (a bedtime switch, say)", n.entity)}
           <div class="field"><label for="gstate">Night while it's</label><select id="gstate" class="pick wide" data-input="gstate"><option value="on" ${n.state === "on" ? "selected" : ""}>On</option><option value="off" ${n.state === "off" ? "selected" : ""}>Off</option></select></div>
-          <p class="muted small">If the sensor is unavailable, the Nest shows the day's glance.</p>` : ""}
-        <div class="field"><label for="gnlayout">Layout at night</label><select id="gnlayout" class="pick wide" data-input="gnlayout">${GLANCE_LAYOUTS.map(([k, name]) => `<option value="${k}" ${k === n.layout ? "selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
-        <div class="kv"><span>Dim and warm<span class="sub">Drawn darker and warmer, on top of the Nest's own brightness</span></span>${sw("gdim", n.dim, "Dim and warm")}</div>
-        <p class="muted small">${t.night ? "It's night now: the Nest has the night's glance." : "It's day now."} Switch the preview to Night to choose the night's lines.</p>`;
+          ${n.entity ? "" : `<p class="now muted">Choose the sensor: until then it's always day.</p>`}` : ""}
+        ${n.mode !== "off" ? `<div class="kv flat"><span>Dim and warm<span class="sub">Drawn darker and warmer, on top of the Nest's own brightness</span></span>${sw("gdim", n.dim, "Dim and warm")}</div>
+          <p class="now muted">${nightNow ? "By these settings it's night now." : "By these settings it's day now."}${n.mode === "sensor" ? " If the sensor is unavailable, it's day." : ""}</p>` : ""}`
+      : `<p class="muted small nightline">${n.mode === "off" ? "At night: the same glance." : `At night: ${esc(layoutName(n.layout))}, ${esc(this._glanceNightWhen())}.`}
+          <button class="btn text" data-act="gnight">${n.mode === "off" ? "Set up a night glance" : "Edit"}</button></p>`;
     return `<div class="cols glance">
       <section class="stage" aria-label="The glance as the Nest shows it">
-        <span class="muted caps">On the Nest</span>
+        <span class="muted caps">On the Nest${night ? " · at night" : ""}</span>
         <div class="bezel ${this._gview.far ? "far" : ""}"><div class="screen ${night && n.dim ? "dim" : ""}">${this._glanceScreen()}</div></div>
-        <div class="segs" role="group" aria-label="Day or night">${seg("gday", !night, "Day")}${seg("gnight", night, "Night", n.mode === "off" ? "disabled" : "")}</div>
         <div class="segs" role="group" aria-label="How far away">${seg("gnear", !this._gview.far, "Close up")}${seg("gfar", this._gview.far, "Across the room")}</div>
         <button class="btn ghost" data-act="gtry" ${t.loaded ? "" : "disabled"}><ha-icon icon="mdi:eye-outline"></ha-icon>Try on the Nest</button>
         <span class="muted small center">Shows this glance on the Nest for 20 seconds, without saving it.</span>
       </section>
       <section class="card pad">
-        ${off ? `<div class="banner warn inline">Nothing shows the glance yet: choose it for someone across the room or close up on Wake &amp; presence.</div>` : ""}
-        ${old ? `<div class="banner warn inline">The Nest's Fledge build is older than these layouts: it shows the clock as before until it updates (Thermostat tab).</div>` : ""}
+        ${unshown ? `<div class="banner warn inline">Nothing shows the glance yet. Choose it for someone across the room or close up. <button class="btn text" data-act="tab" data-tab="wake">Wake &amp; presence</button></div>` : ""}
+        ${old ? `<div class="banner warn inline">The Nest's Fledge build is older than these layouts: it shows the clock as before until it updates. <button class="btn text" data-act="tab" data-tab="thermostat">Thermostat</button></div>` : ""}
+        <div class="segs wide" role="group" aria-label="Which glance">${seg("gday", !night, "Day glance")}${seg("gnight", night, "Night glance")}</div>
+        ${when}
         <h2>Layout</h2>
         <div class="lays" role="radiogroup" aria-label="Layout">${layouts}</div>
-        ${g.layout === "number" ? `<h2>Big number</h2>${this._entityField("gbig", "sensor,input_number,number,counter", "Shows", g.big)}
-          <div class="field"><label for="gbiglabel">Label</label><input id="gbiglabel" type="text" maxlength="40" placeholder="Its name" value="${esc(g.big_label || "")}" data-input="gbiglabel"></div>` : ""}
-        ${g.layout === "temp" ? `<div class="kv"><span>Colour the screen while heating or cooling<span class="sub">Orange while heating, blue while cooling, as the Nest's own Farsight</span></span>${sw("gcolour", g.colour, "Colour the screen")}</div>` : ""}
-        <h2>Clock</h2>
+        ${extras}
+        <div class="head2"><h2>Lines</h2>${chosen[layout] ? `<button class="btn text" data-act="greset">Reset</button>` : ""}</div>
+        <p class="muted small">${lines.length === 1 ? `${esc(layoutName(layout))} has room for one line.` : `${esc(layoutName(layout))} has room for ${lines.length} lines, top to bottom.`} An empty line leaves its place blank.</p>
+        ${lines.map(slot).join("")}
+        <h2>For day and night</h2>
         <div class="field"><label for="ghours">Time format</label><select id="ghours" class="pick wide" data-input="ghours">
           <option value="auto" ${g.hours === "auto" ? "selected" : ""}>Automatic${this._gpreview ? ` (${this._gpreview.twelve ? "12" : "24"}-hour here)` : ""}</option>
           <option value="12" ${g.hours === "12" ? "selected" : ""}>12-hour</option><option value="24" ${g.hours === "24" ? "selected" : ""}>24-hour</option></select></div>
-        ${(this._gpreview?.twelve ?? g.hours === "12") ? `<div class="kv"><span>Show AM / PM<span class="sub">Small, beside the time</span></span>${sw("gampm", g.ampm, "Show AM / PM")}</div>` : ""}
-        <h2>Lines <span class="chip ${night ? "warm" : ""}">${night ? `Night · ${esc(GLANCE_LAYOUTS.find(([k]) => k === layout)[1])}` : "Day"}</span></h2>
-        <p class="muted small">${lines.length === 1 ? "This layout has room for one line." : `This layout has room for ${lines.length} lines, top to bottom.`}${night ? " These are the night's own." : ""}</p>
-        ${lines.map(slot).join("")}
-        ${this._entityField("weather", "weather", "Weather (also the Nest's own weather screen)", d.weather)}
-        ${usesCalendar ? this._entityField("gcal", "calendar", "Calendar", g.calendar) : ""}
-        <h2>At night</h2>
-        <div class="field"><label for="gnmode">Night is</label><select id="gnmode" class="pick wide" data-input="gnmode">${GLANCE_NIGHT.map(([k, label]) => `<option value="${k}" ${k === n.mode ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>
-        ${nightBody}
-        <p class="muted small">Automations can change the layout with the Glance layout entity; Night glance says which one is up.</p>
+        ${(this._gpreview?.twelve ?? g.hours === "12") ? `<div class="kv flat"><span>Show AM / PM<span class="sub">Small, beside the time</span></span>${sw("gampm", g.ampm, "Show AM / PM")}</div>` : ""}
+        ${usesWeather || d.weather ? this._entityField("weather", "weather", "Weather (also the Nest's own weather screen)", d.weather) : ""}
+        ${usesCalendar || g.calendar ? this._entityField("gcal", "calendar", "Calendar", g.calendar) : ""}
+        <p class="muted small">Automations can change the day's layout with the Glance layout entity. Night glance says which one is up.</p>
       </section>
     </div>`;
   }
@@ -1745,7 +1822,17 @@ class FledgePanel extends HTMLElement {
         this._tab = el.dataset.tab;
         if (this._tab === "glance") this._glanceRefresh();
         break;
-      case "glayout": d.glance.layout = el.dataset.k; this._gview.night = false; this._glanceSoon(); break;
+      case "glayout":
+        if (this._gview.night) d.glance.night.layout = el.dataset.k;
+        else d.glance.layout = el.dataset.k;
+        this._glanceSoon();
+        break;
+      case "greset": {
+        const { layout, chosen } = this._glanceEditing();
+        delete chosen[layout];
+        this._glanceSoon();
+        break;
+      }
       case "gday": this._gview.night = false; this._glanceSoon(); break;
       case "gnight": this._gview.night = true; this._glanceSoon(); break;
       case "gnear": this._gview.far = false; break;
@@ -1753,7 +1840,7 @@ class FledgePanel extends HTMLElement {
       case "gtry": this._glanceTry(); return;
       case "gampm": d.glance.ampm = !d.glance.ampm; this._glanceSoon(); break;
       case "gcolour": d.glance.colour = !d.glance.colour; this._glanceSoon(); break;
-      case "gdim": d.glance.night.dim = !d.glance.night.dim; this._gview.night = true; this._glanceSoon(); break;
+      case "gdim": d.glance.night.dim = !d.glance.night.dim; this._glanceSoon(); break;
       case "select": this._sel = Number(el.dataset.i); break;
       case "turn": {
         const total = d.order.length;
@@ -1789,7 +1876,7 @@ class FledgePanel extends HTMLElement {
         return;
       }
       case "save": this._save(); return;
-      case "revert": this._reset(true); this._refresh(); return;
+      case "revert": this._reset(true); this._refresh(); this._glanceSoon(); return;
       case "more":
         this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: el.dataset.id }, bubbles: true, composed: true }));
         return;
@@ -1913,8 +2000,11 @@ class FledgePanel extends HTMLElement {
         return;
       }
       this._index = Number(el.value);
+      this._gpreview = null;
+      this._gkey = "";
       this._reset();
       this._refresh();
+      if (this._tab === "glance") this._glanceRefresh();
     } else if (what === "note") {
       const key = el.dataset.key;
       this._note[key] = key === "timeout" ? Number(el.value) || 30 : el.value;
@@ -1940,24 +2030,25 @@ class FledgePanel extends HTMLElement {
       else this._saveBarOnly();
       return true;
     }
-    if (!change) return ["ghours", "gsource", "gnmode", "gafter", "gbefore", "gfrom", "guntil", "gstate", "gnlayout"].includes(what);
+    if (!change) return ["ghours", "gsource", "gnmode", "gafter", "gbefore", "gfrom", "guntil", "gstate"].includes(what);
     const minutes = (v) => Math.max(-180, Math.min(180, Math.round(Number(v)) || 0));
     switch (what) {
       case "ghours": g.hours = el.value; break;
       case "gsource": {
         const line = this._glanceLine(Number(el.dataset.i));
         line.source = el.value;
-        if (el.value !== "entity") { delete line.entity; delete line.label; }
-        if (el.value !== "template") delete line.template;
+        // Another kind of line: what the last one followed doesn't carry over.
+        delete line.entity;
+        delete line.label;
+        delete line.template;
         break;
       }
-      case "gnmode": n.mode = el.value; this._gview.night = el.value !== "off" && this._gview.night; break;
+      case "gnmode": n.mode = el.value; break;
       case "gafter": n.after = minutes(el.value); break;
       case "gbefore": n.before = minutes(el.value); break;
       case "gfrom": if (/^\d\d:\d\d$/.test(el.value)) n.from = el.value; break;
       case "guntil": if (/^\d\d:\d\d$/.test(el.value)) n.until = el.value; break;
       case "gstate": n.state = el.value; break;
-      case "gnlayout": n.layout = el.value; this._gview.night = true; break;
       default: return false;
     }
     this._render();
@@ -2210,7 +2301,13 @@ input:focus,.pick:focus{outline:none;border-bottom:2px solid var(--fl-primary)}
 .lay .thumb .screen{display:block}
 .lay .name{font-size:13px;font-weight:500}
 .lay .sub{font-size:11.5px;color:var(--fl-muted);line-height:1.3}
-.gslot{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.gslot{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.now{font-size:13px;margin:-2px 0 0}
+.segs.wide{display:flex;margin-bottom:6px}
+.segs.wide .seg{flex:1;height:36px}
+.head2{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.nightline{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.banner.inline .btn.text{padding:0 6px;height:auto;vertical-align:baseline}
 textarea{background:var(--fl-field);border:0;border-bottom:1px solid var(--fl-muted);border-radius:6px 6px 0 0;color:inherit;font-family:var(--code-font-family,ui-monospace,monospace);font-size:13px;padding:10px 12px;resize:vertical}
 input[type=time]{background:var(--fl-field);border:0;border-bottom:1px solid var(--fl-muted);border-radius:6px 6px 0 0;color:inherit;font:inherit;font-size:15px;padding:10px 12px;min-height:44px}
 .glance h2{margin-top:18px;margin-bottom:8px}

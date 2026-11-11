@@ -135,7 +135,7 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         # build that has it.
         "room_sensor_switch": option_switch(hass, serial),
         "needs": needs(entry.options.get(CONF_ENTITIES), entry.options.get(CONF_SHOW_THERMOSTAT, True),
-                       glance.customised(entry.options.get(CONF_GLANCE_SETTINGS))),
+                       FAR_GLANCE in presence(entry.options)[:2] and glance.customised(entry.options.get(CONF_GLANCE_SETTINGS))),
         # The glance's settings, defaults filled in, and whether it's night now.
         "glance": glance.settings(entry.options.get(CONF_GLANCE_SETTINGS)),
         "night": running.night if running else False,
@@ -296,16 +296,15 @@ def ws_glance_preview(hass: HomeAssistant, connection: websocket_api.ActiveConne
     if running is None:
         return
     chosen = glance.settings(msg["glance"])
-    weather = msg.get("weather") if "weather" in msg else running.entry.options.get(CONF_WEATHER)
+    weather = msg["weather"] if "weather" in msg else running.entry.options.get(CONF_WEATHER)
     entities = msg.get("entities") or running.entities
-    sources = glance.Sources(hass, glance.twelve_hour(hass, chosen["hours"]), entities, running.feeds.hourly,
-                             running.feeds.daily, weather, chosen.get("calendar"))
     night = msg["night"]
     nights = chosen["night"]
     layout = nights["layout"] if night else chosen["layout"]
     specs = glance.lines_for(nights["lines"] if night else chosen["lines"], layout, night)
     climate = _thermostat(hass, running.entry)["climate"]
-    shown, _ = running._glance(msg["glance"], night)  # noqa: SLF001 - the panel's own thermostat
+    sources = running.glance_sources(chosen, weather, entities)
+    shown, _ = running.glance_for(msg["glance"], night, weather, entities)
     connection.send_result(msg["id"], {
         "glance": shown,
         "lines": [sources.preview(spec, hass.states.get(climate) if climate else None) for spec in specs],

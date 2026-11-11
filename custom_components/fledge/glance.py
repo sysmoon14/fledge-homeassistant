@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.helpers.template import Template
+from homeassistant.helpers.translation import async_translate_state
 from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,7 +199,9 @@ def number(hass: HomeAssistant, state: State) -> str:
     try:
         value = float(state.state)
     except (TypeError, ValueError):
-        return state.state.replace("_", " ").capitalize() if state.state not in ("unknown", "unavailable") else "–"
+        if state.state in ("unknown", "unavailable"):
+            return "–"
+        return said_state(hass, state)
     entry = er.async_get(hass).async_get(state.entity_id)
     precision = None
     if entry is not None:
@@ -211,10 +214,22 @@ def number(hass: HomeAssistant, state: State) -> str:
     return f"{value:.{int(precision)}f}"
 
 
+def said_state(hass: HomeAssistant, state: State) -> str:
+    """A state in words as Home Assistant's own pages say it: a door sensor's
+    "on" is Open, a person's "not_home" is Away."""
+    try:
+        entry = er.async_get(hass).async_get(state.entity_id)
+        said = async_translate_state(hass, state.state, state.domain, entry.platform if entry else None,
+                                     entry.translation_key if entry else None, state.attributes.get("device_class"))
+    except Exception:  # noqa: BLE001 - the state as it is, tidied
+        said = state.state
+    return state.state.replace("_", " ").capitalize() if said == state.state else said
+
+
 # An icon for a sensor without its own, by device class.
 CLASS_ICONS = {
     "battery": "mdi:battery", "temperature": "mdi:thermometer", "humidity": "mdi:water-percent",
-    "power": "mdi:flash", "energy": "mdi:lightning-bolt", "monetary": "mdi:currency-gbp", "carbon_dioxide": "mdi:molecule-co2",
+    "power": "mdi:flash", "energy": "mdi:lightning-bolt", "carbon_dioxide": "mdi:molecule-co2",
     "gas": "mdi:fire", "occupancy": "mdi:account", "presence": "mdi:account", "door": "mdi:door", "window": "mdi:window-closed",
 }
 
@@ -362,9 +377,13 @@ class Sources:
         when = f"{day} {time_text(moment, self.twelve)}".strip() if day and day != "Tomorrow" else time_text(moment, self.twelve)
         return (f"Sunset {when}", "mdi:weather-sunset-down") if up else (f"Sunrise {when}", "mdi:weather-sunset-up")
 
-    def _playing(self, _spec: dict) -> tuple[str, str] | None:
-        players = [self.hass.states.get(e) for e in self.cards if e.startswith("media_player.")]
-        players += [s for s in self.hass.states.async_all("media_player") if s.entity_id not in self.cards]
+    def _playing(self, spec: dict) -> tuple[str, str] | None:
+        """What the chosen speaker plays; with none chosen, the first of the
+        cards' speakers that's playing."""
+        if spec.get("entity"):
+            players = [self.hass.states.get(spec["entity"])]
+        else:
+            players = [self.hass.states.get(e) for e in self.cards if e.startswith("media_player.")]
         playing = next((s for s in players if s is not None and s.state == "playing"), None)
         if playing is None:
             return None
@@ -412,9 +431,18 @@ class Sources:
             return None
         label = (spec.get("label") or "").strip() or state.attributes.get("friendly_name") or state.entity_id
         unit = state.attributes.get("unit_of_measurement") or ""
-        value = number(self.hass, state)
+        device_class = state.attributes.get("device_class") or ""
+        moment = _local(state.state) if device_class == "timestamp" else None
+        if moment is not None:
+            # A time (the next alarm, when the washing ends): as a clock reads it.
+            value = f"{_day(moment, self.now)} {time_text(moment, self.twelve)}".strip()
+        else:
+            value = number(self.hass, state)
         text = f"{label} {value}{'' if unit in ('%', '°C', '°F', '°') else ' '}{unit}".strip()
-        icon = state.attributes.get("icon") or CLASS_ICONS.get(state.attributes.get("device_class") or "")
+        icon = state.attributes.get("icon") or CLASS_ICONS.get(device_class)
+        if icon is None and device_class == "monetary":
+            icon = next((f"mdi:currency-{code}" for code, signs in (("gbp", "£GBP"), ("usd", "$USD"), ("eur", "€EUR"))
+                         if any(sign in unit for sign in (signs[0], signs[1:]))), None)
         return text, icon
 
     def _template(self, spec: dict) -> tuple[str, None] | None:
@@ -464,19 +492,23 @@ def build(sources: Sources, chosen: dict[str, Any], night: bool, base: dict[str,
 
 
 def watched(chosen: dict[str, Any]) -> list[str]:
-    """The entities the glance follows: its lines', the big number's, the
-    calendar, the night's sensor, people and media for their lines."""
+    """The entities the glance's words come from: its lines' (a sensor, a
+    speaker), the big number's and the calendar. They may change often."""
     entities: set[str] = set()
     for lines in (*chosen["lines"].values(), *chosen["night"]["lines"].values()):
         for spec in lines:
-            if spec.get("source") == "entity" and spec.get("entity"):
+            if spec.get("source") in ("entity", "playing") and spec.get("entity"):
                 entities.add(spec["entity"])
     for key in ("big", "calendar"):
         if chosen.get(key):
             entities.add(chosen[key])
-    if chosen["night"].get("mode") == "sensor" and chosen["night"].get("entity"):
-        entities.add(chosen["night"]["entity"])
     return sorted(entities)
+
+
+def night_sensor(chosen: dict[str, Any]) -> str | None:
+    """The sensor that says when it's night, if one does."""
+    night = chosen["night"]
+    return night.get("entity") if night.get("mode") == "sensor" else None
 
 
 def templates(chosen: dict[str, Any]) -> list[str]:
