@@ -37,6 +37,9 @@ CARD_IDLE = 20
 CONF_DIM_OFF = "dim_off"
 # What a card is called on the Nest, where not its friendly name: by entity.
 CONF_NAMES = "names"
+# Where a card's ring stops, by entity: each of what it sets (cards.LIMITS)
+# as [lowest, highest], either None (protocol 13).
+CONF_LIMITS = "limits"
 # An alarm's settings, by entity: its modes' names on the Nest ("names", by
 # mode), the modes left off the ring ("hidden"), and how many digits its
 # code has ("code_length"; none: a tick sends it).
@@ -85,13 +88,19 @@ PROTOCOL_ROLE = 10
 PROTOCOL_GLANCE = 11
 # Glance faces as cards, with actions (faces.py).
 PROTOCOL_FACE = 13
+# Rings stopped at their limits, and a value already past one shown parked
+# at that end.
+PROTOCOL_LIMITS = 13
 
 
-def needs(entities, show_thermostat: bool = True, glance: bool = False) -> int:
+def needs(entities, show_thermostat: bool = True, glance: bool = False, limits: bool = False) -> int:
     """The protocol a thermostat's build needs for these cards, for its
-    own card hidden, and for a glance of its own (`glance`)."""
+    own card hidden, for a glance of its own (`glance`), and for rings
+    with limits."""
     if any(str(e).startswith(f"{FACE_DOMAIN}.") for e in entities or []):
         return PROTOCOL_FACE
+    if limits:
+        return PROTOCOL_LIMITS
     if glance:
         return PROTOCOL_GLANCE
     if not show_thermostat:

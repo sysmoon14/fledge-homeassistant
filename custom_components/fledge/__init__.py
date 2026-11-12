@@ -38,7 +38,7 @@ from homeassistant.util import dt as dt_util
 from . import art, cards, faces, glance, panel, schedule
 from .feeds import Feeds
 from .config_flow import thermostats
-from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -342,7 +342,7 @@ class Thermostat:
         integration needs."""
         issue = f"outdated_{self.serial}"
         if self.protocol is not None and self.protocol >= needs(self.entities, self.entry.options.get(CONF_SHOW_THERMOSTAT, True),
-                                                                self.own_glance()):
+                                                                self.own_glance(), bool(self.entry.options.get(CONF_LIMITS))):
             ir.async_delete_issue(self.hass, DOMAIN, issue)
         else:
             ir.async_create_issue(self.hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING,
@@ -500,7 +500,8 @@ class Thermostat:
                             options.get(CONF_WAKE_DEVICE), night, options.get(CONF_NAMES),
                             options.get(CONF_THERMOSTAT, 0), options.get(CONF_ALARMS),
                             {face_id: self.face_card(face_id, face, given=(options.get(CONF_NAMES) or {}).get(face_id))
-                             for face_id, face in self.faces.items()})
+                             for face_id, face in self.faces.items()},
+                             options.get(CONF_LIMITS))
         far, near, idle = presence(options)
         shown["presence"] = {"far": far, "near": near}
         shown["card_idle"] = idle
@@ -603,7 +604,8 @@ class Thermostat:
         except (TypeError, ValueError):
             return
         allowed = [*self.entities, *self._members(), *faces.entities(self.faces)]
-        call = cards.command(payload, allowed, self.hass.states.get) if isinstance(payload, dict) else None
+        limits = cards.with_members(self.entry.options.get(CONF_LIMITS), self.hass.states.get)
+        call = cards.command(payload, allowed, self.hass.states.get, limits) if isinstance(payload, dict) else None
         if call is None:
             _LOGGER.warning("Ignoring a command from the thermostat it may not give: %s", cards.redacted(payload))
             return

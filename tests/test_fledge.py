@@ -1188,3 +1188,69 @@ async def test_the_panel_saves_an_alarm_s_names_and_code_length(hass: HomeAssist
                             "entities": ["alarm_control_panel.house"],
                             "alarms": {"alarm_control_panel.house": {"code_length": 2}}})
     assert not (await client.receive_json())["success"], "a code of two digits isn't one"
+
+
+def test_a_ring_s_limits_are_its_ends_and_its_commands_keep_within_them():
+    limits = cards.limit_settings({
+        "climate.kitchen": {"temperature": [18, 25]},
+        "media_player.speaker": {"volume": [10, 50], "brightness": [1, 2]},
+        "light.lamp": {"brightness": [20, None], "kelvin": [2700, 4000]},
+        "cover.blind": {"position": [30, 31]},
+        "light.wrong": {"brightness": [60, 40]},
+        "light.blank": {"brightness": [None, None]},
+        "switch.fan": {"brightness": [10, 20]},
+        "light.far": {"brightness": [0, 101]},
+    })
+    assert limits == {"climate.kitchen": {"temperature": [18, 25]}, "media_player.speaker": {"volume": [10, 50]},
+                      "light.lamp": {"brightness": [20, None], "kelvin": [2700, 4000]},
+                      "cover.blind": {"position": [30, 31]}}, \
+        "only what each ring sets, a lowest under the highest, within what it can be"
+    assert cards.limit_settings(limits, ["light.lamp"]) == {"light.lamp": limits["light.lamp"]}, "only cards shown"
+
+    kitchen = State("climate.kitchen", "heat", temperature=16, min_temp=7, max_temp=30, target_temp_step=0.5)
+    speaker = State("media_player.speaker", "playing", volume_level=0.8)
+    lamp = State("light.lamp", "on", brightness=13, supported_color_modes=["color_temp"], color_temp_kelvin=2200,
+                 min_color_temp_kelvin=2000, max_color_temp_kelvin=6500)
+    blind = State("cover.blind", "open", current_position=80, supported_features=4)
+    group = State("light.room", "on", supported_color_modes=["brightness"])
+    group.attributes["entity_id"] = ["light.lamp"]
+    states = {s.entity_id: s for s in (kitchen, speaker, lamp, blind, group)}
+    shown = cards.cards(list(states), states.get, limits={**limits, "light.room": {"brightness": [40, 90]}})["cards"]
+    climate, media, lights, cover, room = shown
+    assert (climate["min"], climate["max"], climate["target"]) == (18, 25, 16), \
+        "the ring's ends are the limits; the target as it is, past one"
+    assert (media["volume_limits"], media["volume"]) == ([10, 50], 80)
+    one = lights["lights"][0]
+    assert (one["brightness_limits"], one["kelvins"], one["kelvin"]) == ([20, 100], [2700, 4000], 2200), \
+        "no highest: as far as it goes"
+    assert cover["position_limits"] == [30, 31]
+    assert room["lights"][0]["brightness_limits"] == [40, 90] and "brightness_limits" not in room["members"][0]
+    plain = cards.cards(["climate.kitchen"], states.get)["cards"][0]
+    assert (plain["min"], plain["max"]) == (7, 30) and "volume_limits" not in cards.media(speaker)
+
+    every = cards.with_members({**limits, "light.room": {"brightness": [40, 90]}}, states.get)
+    command = lambda id, action, value: cards.command({"id": id, "action": action, "value": value}, list(states), states.get, every)
+    assert command("climate.kitchen", "temperature", 16).data == {"temperature": 18}, "an older Nest's turn kept within"
+    assert command("climate.kitchen", "temperature", 21).data == {"temperature": 21}
+    assert command("media_player.speaker", "volume", 80).data == {"volume_level": 0.5}
+    assert command("media_player.speaker", "volume", 5).data == {"volume_level": 0.1}
+    assert command("light.lamp", "brightness", 5).data == {"brightness_pct": 20}
+    assert command("light.lamp", "color_temp", 6500).data == {"color_temp_kelvin": 4000}
+    assert command("cover.blind", "position", 100).data == {"position": 31}
+    assert command("light.room", "brightness", 100).data == {"brightness_pct": 90}
+    assert every["light.lamp"] == limits["light.lamp"], "a group's own light keeps its own limits"
+
+    # heat_cool: the other end kept within them too, clear of the one set.
+    states["climate.kitchen"] = State("climate.kitchen", "heat_cool", target_temp_low=19, target_temp_high=27,
+                                      target_temp_step=1, hvac_action="heating")
+    assert command("climate.kitchen", "temperature", 17).data == {"target_temp_low": 18, "target_temp_high": 25}
+
+
+def test_limits_need_a_build_that_parks_the_ring():
+    from custom_components.fledge.const import needs
+    from custom_components.fledge.config_flow import options_from
+    assert needs(["light.a"], limits=True) == 13
+    options = options_from({"entities": ["light.a"]}, limits={"light.a": {"brightness": [10, 90]},
+                                                               "light.gone": {"brightness": [10, 90]}})
+    assert options["limits"] == {"light.a": {"brightness": [10, 90]}}
+    assert "limits" not in options_from({"entities": ["light.a"]}, limits={})

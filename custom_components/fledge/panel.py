@@ -22,7 +22,7 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from . import cards, faces, glance
 from .config_flow import options_from, thermostats
 from .feeds import acts_as_thermostat, option_switch, regulates_from_a_sensor, role_switch, wwn_switch
-from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
                     DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
@@ -135,7 +135,8 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         # build that has it.
         "room_sensor_switch": option_switch(hass, serial),
         "needs": needs(entry.options.get(CONF_ENTITIES), entry.options.get(CONF_SHOW_THERMOSTAT, True),
-                       FAR_GLANCE in presence(entry.options)[:2] and glance.customised(entry.options.get(CONF_GLANCE_SETTINGS))),
+                       FAR_GLANCE in presence(entry.options)[:2] and glance.customised(entry.options.get(CONF_GLANCE_SETTINGS)),
+                       bool(entry.options.get(CONF_LIMITS))),
         # The glance's settings, defaults filled in, and whether it's night now.
         "glance": glance.settings(entry.options.get(CONF_GLANCE_SETTINGS)),
         # The glance faces among the cards, by id, defaults filled in.
@@ -173,6 +174,7 @@ def ws_thermostats(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
     vol.Optional(CONF_FACES, default={}): {cv.entity_id: dict},
     vol.Optional("glance"): dict,
     vol.Optional("weather"): vol.Any(None, cv.entity_id),
+    vol.Optional(CONF_LIMITS, default={}): {cv.entity_id: dict},
 })
 @websocket_api.require_admin
 @callback
@@ -192,7 +194,8 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
             continue
         state = get(entity_id)
         if state is not None:
-            shown[entity_id] = cards.named(cards.card(state, get, msg[CONF_ALARMS]), names.get(entity_id))
+            shown[entity_id] = cards.named(cards.card(state, get, msg[CONF_ALARMS], cards.limit_settings(msg[CONF_LIMITS])),
+                                           names.get(entity_id))
     climate = get(msg["climate"]) if msg.get("climate") else None
     connection.send_result(msg["id"], {
         "cards": shown,
@@ -235,6 +238,9 @@ def _face_preview(hass: HomeAssistant, running: Any, face_id: str, msg: dict[str
     vol.Optional(CONF_THERMOSTAT, default=0): vol.All(int, vol.Range(min=0)),
     # An older panel doesn't send it: kept.
     vol.Optional(CONF_ALARMS): {cv.entity_id: ALARM_SETTINGS},
+    # Each [lowest, highest] of what its ring sets; an older panel doesn't
+    # send them: kept.
+    vol.Optional(CONF_LIMITS): {cv.entity_id: {str: [vol.Any(None, vol.Coerce(float))]}},
     vol.Optional(CONF_GLANCE_SETTINGS): dict,
     # The glance faces among the cards, by id. An older panel doesn't send
     # them: kept.
@@ -301,7 +307,8 @@ def ws_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
         CONF_GLANCE_SETTINGS: glance_settings,
         CONF_FACES: face_settings,
     }, {k: v.strip()[:NAME_LENGTH] for k, v in msg[CONF_NAMES].items() if k in entities and v.strip()},
-        alarm_settings(msg[CONF_ALARMS]) if CONF_ALARMS in msg else entry.options.get(CONF_ALARMS))
+        alarm_settings(msg[CONF_ALARMS]) if CONF_ALARMS in msg else entry.options.get(CONF_ALARMS),
+        msg[CONF_LIMITS] if CONF_LIMITS in msg else entry.options.get(CONF_LIMITS))
     hass.config_entries.async_update_entry(entry, options=options)
     connection.send_result(msg["id"], {"options": options})
 

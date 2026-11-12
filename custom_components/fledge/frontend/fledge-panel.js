@@ -29,6 +29,15 @@ const RING = {
   alarm_control_panel: [["Press", "Opens it: press again to arm or disarm"], ["Code", "Turn to each digit, press to enter it, hold to rub out"],
     ["Entry delay", "Takes the screen, straight to the code"]],
 };
+// What a card's ring sets that can be limited, by domain (cards.py LIMITS):
+// key, label, unit, and its widest range from the entity (else fixed).
+const LIMITS = {
+  climate: [["temperature", "Temperature", "°", (a) => [a.min_temp ?? 7, a.max_temp ?? 30], 0.5]],
+  media_player: [["volume", "Volume", "%", () => [0, 100], 1]],
+  cover: [["position", "Position", "%", () => [0, 100], 1]],
+  light: [["brightness", "Brightness", "%", () => [1, 100], 1],
+    ["kelvin", "Warmth", "K", (a) => [a.min_color_temp_kelvin, a.max_color_temp_kelvin], 50]],
+};
 // An alarm's modes, in the ring's order, with Home Assistant's names (cards.py ALARM_MODES).
 const ALARM_MODES = [["home", "Home"], ["away", "Away"], ["night", "Night"], ["vacation", "Vacation"], ["custom_bypass", "Custom"]];
 const ALARM_ICONS = { home: "mdi:shield-home", night: "mdi:shield-moon", vacation: "mdi:airplane", custom_bypass: "mdi:shield-star" };
@@ -941,6 +950,7 @@ class FledgePanel extends HTMLElement {
       room_sensor: options.room_sensor || null,
       names: { ...(options.names || {}) },
       alarms: JSON.parse(JSON.stringify(options.alarms || {})),
+      limits: JSON.parse(JSON.stringify(options.limits || {})),
       device_name: t?.name_by_user || "",
       glance: JSON.parse(JSON.stringify(t?.glance || { layout: "clock", hours: "auto", ampm: true, lines: {}, colour: true,
         night: { mode: "off", after: 30, before: 0, from: "22:00", until: "07:00", state: "on", layout: "analog", dim: true, lines: {} } })),
@@ -980,7 +990,8 @@ class FledgePanel extends HTMLElement {
     const entities = this._entities(draft);
     const names = Object.fromEntries(Object.entries(draft.names).filter(([k, v]) => v.trim() && entities.includes(k)).sort());
     const alarms = Object.fromEntries(Object.entries(draft.alarms || {}).filter(([k]) => entities.includes(k)).sort());
-    return JSON.stringify({ ...draft, device_name: draft.device_name.trim(), names, alarms, faces: this._facesOf(draft),
+    const limits = this._limitsFor(entities, draft);
+    return JSON.stringify({ ...draft, device_name: draft.device_name.trim(), names, alarms, limits, faces: this._facesOf(draft),
       wake_device: entities.includes(draft.wake_device) ? draft.wake_device : null });
   }
 
@@ -1006,6 +1017,19 @@ class FledgePanel extends HTMLElement {
       colour: face.colour !== false, night: { ...g.night, mode: "off" } };
   }
 
+  // The cards' limits as saved: only cards shown, only ends given, sorted.
+  _limitsFor(entities, draft = this._draft) {
+    const out = {};
+    for (const id of [...entities].sort()) {
+      const one = {};
+      for (const [what, pair] of Object.entries(draft.limits?.[id] || {}).sort()) {
+        if (pair && (pair[0] != null || pair[1] != null)) one[what] = [pair[0] ?? null, pair[1] ?? null];
+      }
+      if (Object.keys(one).length) out[id] = one;
+    }
+    return out;
+  }
+
   get _dirty() {
     return !!this._draft && this._fingerprint(this._draft) !== this._saved;
   }
@@ -1025,6 +1049,7 @@ class FledgePanel extends HTMLElement {
     try {
       this._preview = await this._hass.callWS({ type: "fledge/preview", entities: this._entities(), climate: climate || null,
         entry_id: this._current.entry_id, faces: this._facesOf(), glance: d.glance, weather: d.weather || null,
+        limits: this._limitsFor(this._entities()),
         names: Object.fromEntries(Object.entries(d.names).filter(([k, v]) => isFace(k) && v.trim())) });
     } catch (err) {
       this._error = err?.message || String(err);
@@ -1052,6 +1077,7 @@ class FledgePanel extends HTMLElement {
           names: Object.fromEntries(Object.entries(v.names || {}).filter(([, n]) => n.trim())),
           hidden: v.hidden || [], code_length: v.code_length || null, takeover: v.takeover !== false,
         }])),
+        limits: this._limitsFor(entities),
         glance_settings: d.glance,
         faces: this._facesOf(),
       });
@@ -1371,6 +1397,7 @@ class FledgePanel extends HTMLElement {
       <div><div class="muted small">On the ring</div>
         ${(RING[domain] || []).map(([k, v]) => `<div class="kv"><span class="muted">${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>
       ${domain === "alarm_control_panel" ? this._alarmSettings(id) : ""}
+      ${this._limitSettings(id, domain)}
       <div class="kv"><span>Wake straight to this card</span>${this._switch("wakehere", wakes, "Wake straight to this card")}</div>
       <div class="actions">${this._moves()}
         <button class="btn ghost" data-act="more" data-id="${esc(id)}">Open</button>
@@ -1439,6 +1466,34 @@ class FledgePanel extends HTMLElement {
       <div class="actions">${this._moves()}<span class="grow"></span>
         <button class="btn text bad" data-act="remove">Remove</button></div>
     </section>`;
+  }
+
+  // Where the ring stops: for each thing it sets, the lowest and highest
+  // the Nest can turn it to. Home Assistant can still set it anywhere.
+  _limitSettings(id, domain) {
+    const a = this._hass.states[id]?.attributes || {};
+    const kinds = (LIMITS[domain] || []).filter(([, , , range]) => range(a).every((v) => typeof v === "number"))
+      .filter(([what]) => domain !== "light" || what !== "brightness" || this._preview.cards[id]?.lights?.[0]?.dimmable)
+      .filter(([what]) => domain !== "cover" || this._preview.cards[id]?.positionable);
+    if (!kinds.length) return "";
+    const limits = this._draft.limits[id] || {};
+    const rows = kinds.map(([what, label, unit, range, step]) => {
+      const [low, high] = range(a);
+      const [lo, hi] = limits[what] || [null, null];
+      const wrong = lo != null && hi != null && lo >= hi;
+      const field = (end, value, word, fallback) => `<div class="field"><label for="limit-${what}-${end}">${esc(word)}</label>
+        <input id="limit-${what}-${end}" type="number" inputmode="decimal" min="${low}" max="${high}" step="${step}"
+          placeholder="${esc(`${fallback}${unit}`)}" value="${value ?? ""}" data-input="limit" data-what="${what}" data-end="${end}"
+          aria-label="${esc(`${label}: ${word.toLowerCase()}`)}"></div>`;
+      return `<div class="muted small">${esc(label)}</div>
+        <div class="split">${field(0, lo, "Lowest", low)}${field(1, hi, "Highest", high)}</div>
+        ${wrong ? `<div class="banner warn inline">The lowest has to be under the highest, or this limit is ignored.</div>` : ""}`;
+    }).join("");
+    return `<div class="group">
+        <div class="muted small">Ring limits</div>
+        <p class="muted small">The ring's ends: the Nest can't turn it past them. Blank, as far as it goes. Home Assistant can still set it anywhere; opened past a limit, the card waits at that end until you turn.</p>
+        ${rows}
+      </div>`;
   }
 
   // An alarm's settings: its modes on the ring, each named as on the Nest,
@@ -2273,6 +2328,14 @@ class FledgePanel extends HTMLElement {
     if (what === "name") {
       d.names[d.order[this._sel]] = el.value;
       this._render();
+    } else if (what === "limit" && e.type === "change") {
+      const id = d.order[this._sel];
+      const pair = ((d.limits[id] ||= {})[el.dataset.what] ||= [null, null]);
+      const n = el.value.trim() === "" ? null : Number(el.value);
+      pair[Number(el.dataset.end)] = Number.isFinite(n) ? n : null;
+      if (pair[0] == null && pair[1] == null) delete d.limits[id][el.dataset.what];
+      this._render();
+      this._refreshSoon();
     } else if (what === "alarmname") {
       const settings = (d.alarms[d.order[this._sel]] ||= {});
       settings.names = { ...(settings.names || {}), [el.dataset.mode]: el.value };

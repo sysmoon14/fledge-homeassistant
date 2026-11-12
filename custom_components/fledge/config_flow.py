@@ -11,8 +11,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
-from . import faces
-from .const import (CONF_FACES, CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+from . import cards, faces
+from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
                     CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
                     NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
@@ -71,10 +71,10 @@ def _cards_schema(hass: HomeAssistant, serial: str, current: dict[str, Any]) -> 
 
 
 def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None,
-                 alarms: dict[str, Any] | None = None) -> dict[str, Any]:
+                 alarms: dict[str, Any] | None = None, limits: dict[str, Any] | None = None) -> dict[str, Any]:
     """The entry's options from the form's (or the panel's) answers, and
-    the cards' names on the Nest and alarms' settings: only for cards still
-    shown. The thermostat's place is kept within the cards."""
+    the cards' names on the Nest, alarms' settings and rings' limits: only
+    for cards still shown. The thermostat's place is kept within the cards."""
     options = {CONF_ENTITIES: list(user_input.get(CONF_ENTITIES) or []),
                CONF_WAKE: user_input.get(CONF_WAKE, WAKE_CHOOSER)}
     if user_input.get(CONF_WAKE_DEVICE):
@@ -104,6 +104,9 @@ def options_from(user_input: dict[str, Any], names: dict[str, str] | None = None
     kept = {k: v for k, v in (user_input.get(CONF_FACES) or {}).items() if k in options[CONF_ENTITIES]}
     if kept:
         options[CONF_FACES] = kept
+    limits = cards.limit_settings(limits, options[CONF_ENTITIES])
+    if limits:
+        options[CONF_LIMITS] = limits
     return options
 
 
@@ -181,7 +184,7 @@ class FledgeOptionsFlow(OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            # Names and the thermostat's place are the panel's: kept.
+            # Names, the thermostat's place and rings' limits are the panel's: kept.
             names = self.config_entry.options.get(CONF_NAMES)
             place = self.config_entry.options.get(CONF_THERMOSTAT)
             alarms = self.config_entry.options.get(CONF_ALARMS)
@@ -191,7 +194,8 @@ class FledgeOptionsFlow(OptionsFlow):
             entities = with_faces(list(user_input.get(CONF_ENTITIES) or []), before)
             return self.async_create_entry(data=options_from({**user_input, CONF_ENTITIES: entities, CONF_THERMOSTAT: place,
                                                               CONF_GLANCE_SETTINGS: glance,
-                                                              CONF_FACES: self.config_entry.options.get(CONF_FACES)}, names, alarms))
+                                                              CONF_FACES: self.config_entry.options.get(CONF_FACES)}, names, alarms,
+                                                             self.config_entry.options.get(CONF_LIMITS)))
         serial = self.config_entry.data[CONF_SERIAL]
         return self.async_show_form(step_id="init",
                                     data_schema=_cards_schema(self.hass, serial, dict(self.config_entry.options)))

@@ -22,6 +22,77 @@ from .const import CHOICES, RUN, SWITCHED
 # Colour modes with colours to choose, beyond a white's warmth.
 COLOUR_MODES = ("hs", "rgb", "rgbw", "rgbww", "xy")
 
+# What a card's ring sets that limits can narrow, by domain, and the widest
+# each can be: the ring's two ends become the limits, and the Nest's
+# commands are kept within them (a limit outside this means nothing).
+LIMITS: dict[str, dict[str, tuple[float, float]]] = {
+    "climate": {"temperature": (-50.0, 100.0)},
+    "media_player": {"volume": (0.0, 100.0)},
+    "cover": {"position": (0.0, 100.0)},
+    "light": {"brightness": (1.0, 100.0), "kelvin": (1000.0, 12000.0)},
+}
+
+
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def limit_settings(limits: Mapping[str, Any] | None, entities: Sequence[str] | None = None) -> dict[str, dict[str, list]]:
+    """Cards' limits as kept: by entity (of `entities`, if given), each of
+    what its ring sets (LIMITS) as [lowest, highest], either None for no
+    limit that end. Ends outside what it can be, and a lowest not under
+    the highest, are dropped."""
+    kept: dict[str, dict[str, list]] = {}
+    for entity, settings in (limits or {}).items():
+        allowed = LIMITS.get(_domain(str(entity)))
+        if (entities is not None and entity not in entities) or not allowed or not isinstance(settings, Mapping):
+            continue
+        one = {}
+        for what, pair in settings.items():
+            if what not in allowed or not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            floor, ceiling = allowed[what]
+            low, high = (n if (n := _number(v)) is not None and floor <= n <= ceiling else None for v in pair)
+            if (low is None and high is None) or (low is not None and high is not None and low >= high):
+                continue
+            one[what] = [low, high]
+        if one:
+            kept[entity] = one
+    return kept
+
+
+def with_members(limits: Mapping[str, Any] | None, get: Callable[[str], Any]) -> dict[str, Any]:
+    """Limits by entity, a light group's also its own lights' where they
+    have none of their own: the Nest dims a group's lights through it."""
+    out = dict(limits or {})
+    for entity, settings in (limits or {}).items():
+        for member in members(get(entity)):
+            out.setdefault(member, settings)
+    return out
+
+
+def narrowed(low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> tuple[float, float]:
+    """A ring's range, `low` to `high`, within its limits (`limits`: one
+    entity's); its own if they'd leave nothing of it."""
+    pair = (limits or {}).get(what)
+    lowest, highest = (pair if isinstance(pair, (list, tuple)) and len(pair) == 2 else (None, None))
+    a = max(low, lowest) if _number(lowest) is not None else low
+    b = min(high, highest) if _number(highest) is not None else high
+    return (a, b) if a < b else (low, high)
+
+
+def _within(value: float, low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> float:
+    a, b = narrowed(low, high, limits, what)
+    return min(max(value, a), b)
+
+
+def _ring_limits(low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> dict[str, Any]:
+    """A card's `<what>_limits`, [lowest, highest], where it has any."""
+    if what not in (limits or {}):
+        return {}
+    a, b = narrowed(low, high, limits, what)
+    return {f"{what}_limits": [round(a), round(b)]}
+
 
 class State(Protocol):
     """What cards need of a Home Assistant state."""
@@ -35,11 +106,12 @@ def _name(state: State) -> str:
     return state.attributes.get("friendly_name") or state.entity_id
 
 
-def light(state: State) -> dict[str, Any]:
+def light(state: State, limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One light as the thermostat lists it: dimmable if it supports any
     colour mode beyond on/off; brightness in percent, at least 1 while on;
     its colour Home Assistant's rgb_color, which colour-temperature lights
-    have too."""
+    have too. `limits`, its own: brightness's as brightness_limits, its
+    warmth's range narrowed to them."""
     on = state.state == "on"
     modes = state.attributes.get("supported_color_modes") or []
     level = state.attributes.get("brightness")
@@ -53,11 +125,12 @@ def light(state: State) -> dict[str, Any]:
         and any(mode not in ("onoff", "unknown") for mode in modes),
         "brightness": max(round(level * 100 / 255), 1) if on and isinstance(level, (int, float)) else None,
         "rgb": list(rgb) if rgb else None,
-        **_shades(state, modes),
+        **_ring_limits(1, 100, limits, "brightness"),
+        **_shades(state, modes, limits),
     }
 
 
-def _shades(state: State, modes: Sequence[str]) -> dict[str, Any]:
+def _shades(state: State, modes: Sequence[str], limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """A light's white warmth (kelvin, and the range it takes) and colour
     (hue), where it has them, for their dials on the thermostat."""
     out: dict[str, Any] = {}
@@ -65,6 +138,7 @@ def _shades(state: State, modes: Sequence[str]) -> dict[str, Any]:
     if "color_temp" in modes:
         low, high = attributes.get("min_color_temp_kelvin"), attributes.get("max_color_temp_kelvin")
         if isinstance(low, (int, float)) and isinstance(high, (int, float)) and low < high:
+            low, high = narrowed(low, high, limits, "kelvin")
             out["kelvins"] = [round(low), round(high)]
             kelvin = attributes.get("color_temp_kelvin")
             out["kelvin"] = round(kelvin) if isinstance(kelvin, (int, float)) else None
@@ -109,9 +183,13 @@ def _range_end(state: State) -> str | None:
     return "low"
 
 
-def climate(state: State) -> dict[str, Any]:
+def climate(state: State, limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """A thermostat's card; its ring's ends (min, max) narrowed to its
+    temperature limits (`limits`, its own)."""
     attributes = state.attributes
     end = _range_end(state)
+    low, high = narrowed(_number(attributes.get("min_temp")) or 7, _number(attributes.get("max_temp")) or 30,
+                         limits, "temperature")
     target = attributes.get(f"target_temp_{end}") if end else attributes.get("temperature")
     return {
         "kind": "climate",
@@ -122,8 +200,8 @@ def climate(state: State) -> dict[str, Any]:
         "action": attributes.get("hvac_action") or "",
         "target": target,
         "current": attributes.get("current_temperature"),
-        "min": attributes.get("min_temp") or 7,
-        "max": attributes.get("max_temp") or 30,
+        "min": low,
+        "max": high,
         "step": attributes.get("target_temp_step") or 0.5,
         "presets": [p for p in attributes.get("preset_modes") or [] if p != "none"][:4],
         "preset": attributes.get("preset_mode"),
@@ -141,9 +219,12 @@ def climate(state: State) -> dict[str, Any]:
     }
 
 
-def _temperature(state: State | None, value: float) -> dict[str, Any]:
-    """set_temperature's data for `value` from the ring: its target, or in a
-    heat_cool range the end its card shows, the other end kept clear of it."""
+def _temperature(state: State | None, value: float, limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """set_temperature's data for `value` from the ring, within its limits:
+    its target, or in a heat_cool range the end its card shows, the other
+    end kept clear of it (and within them too, where there's room)."""
+    lowest, highest = narrowed(-50.0, 100.0, limits, "temperature")
+    value = min(max(value, lowest), highest)
     end = _range_end(state) if state is not None else None
     if end is None:
         return {"temperature": value}
@@ -152,12 +233,14 @@ def _temperature(state: State | None, value: float) -> dict[str, Any]:
     gap = float(attributes.get("target_temp_step") or 0.5)
     if end == "low":
         low, high = value, max(high, value + gap)
+        high = max(min(high, highest), value + gap) if limits else high
     else:
         low, high = min(low, value - gap), value
+        low = min(max(low, lowest), value - gap) if limits else low
     return {"target_temp_low": low, "target_temp_high": high}
 
 
-def media(state: State) -> dict[str, Any]:
+def media(state: State, limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
     volume = state.attributes.get("volume_level")
     return {
         "kind": "media",
@@ -171,6 +254,7 @@ def media(state: State) -> dict[str, Any]:
         "position": state.attributes.get("media_position"),
         "position_at": _seconds(state.attributes.get("media_position_updated_at")),
         "duration": state.attributes.get("media_duration"),
+        **_ring_limits(0, 100, limits, "volume"),
     }
 
 
@@ -244,13 +328,15 @@ def sensor_names(sensors: Any, get: Any) -> list[str]:
     return [_name(s) if s is not None else e for s, e in zip(found, ids)][:4]
 
 
-def card(state: State, get: Any = lambda _: None, alarms: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def card(state: State, get: Any = lambda _: None, alarms: Mapping[str, Any] | None = None,
+         limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One device's card: a thermostat's, a media player's, a scene's, a
     camera's, a select's, a cover's, an alarm's (with its settings from
     `alarms`), or one light's (or switch's), which the thermostat dims or
     switches straight away; a light group's with its own lights, from
-    `get`, to switch each."""
+    `get`, to switch each. `limits`, by entity: where its ring stops."""
     domain = _domain(state.entity_id)
+    own = (limits or {}).get(state.entity_id)
     if domain == "alarm_control_panel":
         return alarm(state, get, (alarms or {}).get(state.entity_id))
     if domain in CHOICES:
@@ -261,17 +347,18 @@ def card(state: State, get: Any = lambda _: None, alarms: Mapping[str, Any] | No
         position = state.attributes.get("current_position")
         return {"kind": "cover", "id": state.entity_id, "name": _name(state), "icon": state.attributes.get("icon") or "",
                 "state": state.state, "position": round(position) if isinstance(position, (int, float)) else None,
-                "positionable": bool((state.attributes.get("supported_features") or 0) & 4)}
+                "positionable": bool((state.attributes.get("supported_features") or 0) & 4),
+                **_ring_limits(0, 100, own, "position")}
     if domain == "climate":
-        return climate(state)
+        return climate(state, own)
     if domain == "media_player":
-        return media(state)
+        return media(state, own)
     if domain in RUN or domain == "camera":
         return {"kind": "action" if domain in RUN else "camera", "id": state.entity_id, "name": _name(state),
                 "icon": state.attributes.get("icon") or ""}
-    one = light(state)
-    own = [light(s) for s in map(get, members(state)) if s is not None][:MEMBERS]
-    return {"kind": "lights", "name": one["name"], "icon": one["icon"], "lights": [one], "members": own}
+    one = light(state, own)
+    group = [light(s) for s in map(get, members(state)) if s is not None][:MEMBERS]
+    return {"kind": "lights", "name": one["name"], "icon": one["icon"], "lights": [one], "members": group}
 
 
 # A group's own lights the thermostat lists, at most.
@@ -304,13 +391,14 @@ def named(card: dict[str, Any], name: str | None) -> dict[str, Any]:
 
 def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
           night: bool = False, names: Mapping[str, str] | None = None, thermostat: int = 0,
-          alarms: Mapping[str, Any] | None = None, faces: Mapping[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+          alarms: Mapping[str, Any] | None = None, faces: Mapping[str, dict[str, Any]] | None = None,
+          limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state
     from `get` (None: unknown to Home Assistant, left out), and what the
     thermostat wakes to: `device`'s place among the cards, else "chooser"
     or "thermostat" as `wake` says; "auto" picks: the first media player
     playing, else at `night` the first light that's on, else the chooser.
-    `names` renames cards, by entity. `thermostat`: the Nest's own card's
+    `names` renames cards, and `limits` stops their rings, by entity. `thermostat`: the Nest's own card's
     place, before entities[thermostat]; sent where it isn't first. `faces`:
     the glance faces' cards as built (faces.card), by their ids in the order."""
     faces = faces or {}
@@ -327,7 +415,7 @@ def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str 
     if device in ids:
         woken = ids.index(device)
     names = names or {}
-    out: dict[str, Any] = {"cards": [faces[e] if e in faces else named(card(shown[e], get, alarms), names.get(e)) for e in ids],
+    out: dict[str, Any] = {"cards": [faces[e] if e in faces else named(card(shown[e], get, alarms, limits), names.get(e)) for e in ids],
                            "wake": woken}
     # Among the cards shown: those Home Assistant doesn't know are left out.
     place = sum(1 for e in entities[:max(thermostat, 0)] if known(e))
@@ -347,11 +435,13 @@ class Call:
 
 
 def command(payload: Mapping[str, Any], entities: Sequence[str],
-            get: Callable[[str], State | None] = lambda _: None) -> Call | None:
+            get: Callable[[str], State | None] = lambda _: None, limits: Mapping[str, Any] | None = None) -> Call | None:
     """What a command from the thermostat does, or None if it isn't one it
     may give: only the chosen entities (a chosen group's own lights among
     them), only the ways each kind allows. `get`: an entity's state, for
-    what it allows of itself (a climate's modes, its heat_cool range)."""
+    what it allows of itself (a climate's modes, its heat_cool range).
+    `limits`, by entity (with_members): a value from the ring is kept within
+    them, whatever the Nest's build sent."""
     entity = payload.get("id")
     what = payload.get("action")
     # A notification's answer: its tag, not an entity, for an event.
@@ -363,6 +453,7 @@ def command(payload: Mapping[str, Any], entities: Sequence[str],
         return None
     if not isinstance(entity, str) or entity not in entities:
         return None
+    own = (limits or {}).get(entity)
     domain = _domain(entity)
     if domain in SWITCHED:
         # A light goes through the light domain so integrations that act on
@@ -373,9 +464,9 @@ def command(payload: Mapping[str, Any], entities: Sequence[str],
         if what == "on":
             return Call(service_domain, "turn_on", entity, {})
         if what == "brightness" and domain == "light" and 1 <= value <= 100:
-            return Call("light", "turn_on", entity, {"brightness_pct": round(value)})
+            return Call("light", "turn_on", entity, {"brightness_pct": round(_within(value, 1, 100, own, "brightness"))})
         if what == "color_temp" and domain == "light" and 1000 <= value <= 12000:
-            return Call("light", "turn_on", entity, {"color_temp_kelvin": round(value)})
+            return Call("light", "turn_on", entity, {"color_temp_kelvin": round(_within(value, 1000, 12000, own, "kelvin"))})
         if what == "hue" and domain == "light" and 0 <= value <= 360:
             return Call("light", "turn_on", entity, {"hs_color": [value % 360, 100]})
     if domain in RUN and what == "run":
@@ -383,10 +474,10 @@ def command(payload: Mapping[str, Any], entities: Sequence[str],
     if domain == "camera" and what == "snapshot":
         return Call("fledge", "snapshot", entity, {})
     if domain == "climate" and what == "temperature" and 5 <= value <= 35:
-        return Call("climate", "set_temperature", entity, _temperature(get(entity), value))
+        return Call("climate", "set_temperature", entity, _temperature(get(entity), value, own))
     if domain == "media_player":
         if what == "volume" and 0 <= value <= 100:
-            return Call("media_player", "volume_set", entity, {"volume_level": value / 100})
+            return Call("media_player", "volume_set", entity, {"volume_level": round(_within(value, 0, 100, own, "volume")) / 100})
         if what == "play_pause":
             return Call("media_player", "media_play_pause", entity, {})
         if what in ("next", "previous"):
@@ -418,7 +509,7 @@ def command(payload: Mapping[str, Any], entities: Sequence[str],
         return Call(domain, f"alarm_arm_{mode}", entity, data)
     if domain == "cover":
         if what == "position" and 0 <= value <= 100:
-            return Call("cover", "set_cover_position", entity, {"position": round(value)})
+            return Call("cover", "set_cover_position", entity, {"position": round(_within(value, 0, 100, own, "position"))})
         if what in ("open", "close"):
             return Call("cover", f"{what}_cover", entity, {})
     return None
