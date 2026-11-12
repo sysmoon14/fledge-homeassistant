@@ -1293,6 +1293,12 @@ class FledgePanel extends HTMLElement {
       picker.hass = this._hass;
       picker.value = picker.dataset.value || "";
       picker.label = picker.dataset.label;
+      // Its value-changed doesn't bubble (unlike the entity picker's), so
+      // the panel's own listener never hears it: heard on the picker itself.
+      if (!picker._fledgeHeard) {
+        picker._fledgeHeard = true;
+        picker.addEventListener("value-changed", (e) => this._picked(e));
+      }
     }
   }
 
