@@ -42,6 +42,16 @@ from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, GLANCE_TRY_TO
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
+# The largest picture read for a battery face.
+PICTURE_BYTES = 8 * 1024 * 1024
+
+
+def _pictured(shown: dict[str, Any], key: str) -> None:
+    """A glance as built, its battery's picture (if it has one) named by
+    the key the Nest is sent it on."""
+    cell = shown.get("battery") or {}
+    if cell.get("image"):
+        cell["picture"] = key
 
 type FledgeConfigEntry = ConfigEntry["Thermostat"]
 
@@ -305,6 +315,7 @@ class Thermostat:
         if shared is None:
             shared = self.entry.options.get(CONF_GLANCE_SETTINGS)
         shown, _ = self.glance_for(faces.glance_raw(face, shared), False, weather, entities)
+        _pictured(shown, f"battery:{face_id}")
         return faces.card(face_id, face, shown, self.hass.states.get, given)
 
     def _glances(self) -> list[dict[str, Any]]:
@@ -514,6 +525,7 @@ class Thermostat:
         night = False
         if FAR_GLANCE in (far, near):
             shown["glance"], night = self.glance_for(options.get(CONF_GLANCE_SETTINGS))
+            _pictured(shown["glance"], "battery:glance")
         if night != self.night:
             self.night = night
             for listener in list(self.night_listeners):
@@ -522,6 +534,17 @@ class Thermostat:
         if payload != self.last:
             self.last = payload
             await mqtt.async_publish(self.hass, self.cards_topic, payload, retain=True)
+        # The battery faces' pictures, each on its own key: sent as it's
+        # chosen or changed, cleared once it's no longer wanted.
+        wanted = {cell["picture"]: cell["image"] for cell in (
+            (holder.get("glance") or {}).get("battery") or {} for holder in (shown, *shown["cards"])) if cell.get("picture")}
+        for key in [k for k in self.art if k.startswith("battery:") and k not in wanted]:
+            del self.art[key]
+            await mqtt.async_publish(self.hass, ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial, entity=key), b"", retain=True)
+        for key, image in wanted.items():
+            if self.art.get(key) != image:
+                self.art[key] = image
+                self.hass.async_create_task(self._send_picture(key, image))
         for entity in self.entities:
             state = self.hass.states.get(entity)
             if entity.startswith("camera.") and state is not None:
@@ -555,6 +578,53 @@ class Thermostat:
             return  # the track changed again meanwhile
         topic = ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial, entity=entity)
         await mqtt.async_publish(self.hass, topic, png or b"", retain=True)
+
+    async def _send_picture(self, key: str, image: str) -> None:
+        """A battery face's picture, shrunk for the thermostat, or none if
+        it can't be read."""
+        data = await self._image(image)
+        png = await self.hass.async_add_executor_job(art.cutout, data) if data else None
+        if not png:
+            _LOGGER.warning("Fledge: no picture to show from %s", image)
+        if self.art.get(key) != image:
+            return  # changed again meanwhile
+        topic = ART_TOPIC.format(prefix=TOPIC_PREFIX, serial=self.serial, entity=key)
+        await mqtt.async_publish(self.hass, topic, png or b"", retain=True)
+
+    async def _image(self, image: str) -> bytes | None:
+        """A picture's bytes: one uploaded to Home Assistant
+        (/api/image/serve/<id>/...), a file in its www folder (/local/...),
+        or a web address."""
+        from pathlib import Path
+        path: Path | None = None
+        if image.startswith("/api/image/serve/"):
+            image_id = image.split("/")[4] if len(image.split("/")) > 4 else ""
+            if image_id.isalnum():
+                path = Path(self.hass.config.path("image", image_id, "original"))
+        elif image.startswith("/local/"):
+            www = Path(self.hass.config.path("www")).resolve()
+            candidate = (www / image.removeprefix("/local/").split("?")[0]).resolve()
+            if candidate.is_relative_to(www):
+                path = candidate
+        elif image.startswith(("http://", "https://")):
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+            try:
+                async with asyncio.timeout(15):
+                    response = await async_get_clientsession(self.hass).get(image)
+                    if response.status == 200 and (response.content_length or 0) <= PICTURE_BYTES:
+                        return await response.content.read(PICTURE_BYTES)
+            except Exception:  # noqa: BLE001 - a picture that can't be fetched: none shown
+                _LOGGER.debug("No picture from %s", image, exc_info=True)
+            return None
+        if path is None:
+            return None
+
+        def read() -> bytes | None:
+            try:
+                return path.read_bytes() if path.stat().st_size <= PICTURE_BYTES else None
+            except OSError:
+                return None
+        return await self.hass.async_add_executor_job(read)
 
     async def _still(self, camera: str) -> bytes | None:
         """A camera's picture now, about display-sized, as JPEG, or None."""

@@ -1320,3 +1320,24 @@ async def test_the_battery_face_says_what_the_battery_is_doing(hass: HomeAssista
     assert glance.battery(hass, {}) is None
     face = faces.settings({"layout": "battery", "battery": spec})
     assert faces.glance_raw(face, {})["battery"]["level"] == "sensor.car_battery"
+
+
+def test_a_battery_face_s_picture_is_fitted_whole_and_kept_see_through():
+    from io import BytesIO
+    from PIL import Image
+    from custom_components import fledge
+    source = Image.new("RGBA", (400, 100), (200, 30, 30, 255))
+    source.putpixel((0, 0), (0, 0, 0, 0))
+    data = BytesIO()
+    source.save(data, "PNG")
+    with Image.open(BytesIO(art.cutout(data.getvalue()))) as out:
+        assert (out.mode, out.size) == ("RGBA", (168, 168)), "a square, as the Nest takes any picture"
+        assert out.getpixel((84, 84)) == (200, 30, 30, 255), "the picture across its middle"
+        assert out.getpixel((84, 10))[3] == 0 and out.getpixel((84, 160))[3] == 0, "see-through above and below"
+    assert art.cutout(b"not a picture") is None
+    shown = {"battery": {"image": "/local/car.png"}}
+    fledge._pictured(shown, "battery:glance")
+    assert shown["battery"]["picture"] == "battery:glance"
+    plain = {"battery": {"icon": "mdi:car"}}
+    fledge._pictured(plain, "battery:glance")
+    assert "picture" not in plain["battery"], "an icon: nothing to send"

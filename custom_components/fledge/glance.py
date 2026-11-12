@@ -92,6 +92,9 @@ BATTERY = vol.Schema({
     vol.Optional("low", default=20): vol.All(int, vol.Range(min=0, max=100)),
     vol.Optional("critical", default=10): vol.All(int, vol.Range(min=0, max=100)),
     vol.Optional("icon"): vol.Any(None, vol.All(str, vol.Length(max=60))),
+    # A picture in the icon's place: one of Home Assistant's own (an
+    # uploaded image's address, a file under /local/) or a web address.
+    vol.Optional("image"): vol.Any(None, vol.All(str, vol.Length(max=300))),
     vol.Optional("label"): vol.Any(None, vol.All(str, vol.Length(max=40))),
     vol.Optional("charging_line"): vol.Any(None, LINE),
 })
@@ -679,7 +682,9 @@ def battery(hass: HomeAssistant, spec: dict[str, Any] | None) -> dict[str, Any] 
     else:
         status, text = "idle", ""
     name = (spec.get("label") or "").strip() or level_state.attributes.get("friendly_name") or level_state.entity_id
-    return {"label": str(name)[:40], "level": None if level is None else max(0.0, min(100.0, level)), "status": status,
+    image = (spec.get("image") or "").strip()
+    return {**({"image": image} if image else {}),
+            "label": str(name)[:40], "level": None if level is None else max(0.0, min(100.0, level)), "status": status,
             "text": text, "limit": _reading(get("limit")), "low": low, "critical": critical,
             "icon": spec.get("icon") or level_state.attributes.get("icon") or "mdi:battery"}
 

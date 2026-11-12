@@ -779,7 +779,9 @@ function glanceFace(f, g, lines, nest, now) {
         const [x2, y2] = onCircle(-146 + 292 * cell.limit / 100, 225);
         f.svg.push(`<line x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}" stroke="#fff" stroke-opacity="0.85" stroke-width="3" stroke-linecap="round"/>`);
       }
-      f.icon(cell.icon || "mdi:battery", 240, 96, 52, coloured || mood == null ? N.WHITE : ring);
+      // Its picture, fitted whole into the icon's place (art.py cutout), else its icon.
+      if (cell.image) f.svg.push(`<image href="${esc(cell.image)}" x="174" y="62.5" width="132" height="59" preserveAspectRatio="xMidYMid meet"/>`);
+      else f.icon(cell.icon || "mdi:battery", 240, 96, 52, coloured || mood == null ? N.WHITE : ring);
       label(156, cell.label || "");
       if (cellLevel == null) raw(240, NUMBER, "–", 170, N.WHITE);
       else f.big(Math.round(cellLevel), false, "%");
@@ -952,6 +954,9 @@ class FledgePanel extends HTMLElement {
       const helpers = await window.loadCardHelpers?.();
       const card = helpers && (await helpers.createCardElement({ type: "entities", entities: [] }));
       await card?.constructor?.getConfigElement?.();
+      // Its icon picker comes with the button card's editor.
+      const button = helpers && (await helpers.createCardElement({ type: "button" }));
+      await button?.constructor?.getConfigElement?.();
       await Promise.race([customElements.whenDefined("ha-entity-picker"), new Promise((r) => setTimeout(r, 4000))]);
     } catch (_) { /* the plain list then */ }
     if (customElements.get("ha-entity-picker")) {
@@ -1283,6 +1288,11 @@ class FledgePanel extends HTMLElement {
       picker.value = picker.dataset.value || "";
       picker.label = picker.dataset.label;
       picker.disabled = picker.hasAttribute("data-disabled");
+    }
+    for (const picker of this.shadowRoot.querySelectorAll("ha-icon-picker[data-pick]")) {
+      picker.hass = this._hass;
+      picker.value = picker.dataset.value || "";
+      picker.label = picker.dataset.label;
     }
   }
 
@@ -1904,7 +1914,13 @@ class FledgePanel extends HTMLElement {
           ${this._entityField("gbat_limit", "number,input_number,sensor", "Charge limit (optional)", b.limit)}</div>
         <div class="split">${percent("low", "Low below (%)", b.low ?? 20)}${percent("critical", "Very low below (%)", b.critical ?? 10)}</div>
         <p class="muted small">The line under the number is worked out from these: Charging · 7.2 kW, Plugged in, or a discharge's power. Without a charging entity, power going in counts as charging. The white notch on the ring is the charge limit.</p>
-        <div class="split">${text("label", "Called", "Its name", b.label)}${text("icon", "Icon", "mdi:car-electric", b.icon)}</div>
+        ${text("label", "Called", "Its name", b.label)}
+        <div class="split">${customElements.get("ha-icon-picker")
+          ? `<ha-icon-picker data-pick="gbat_icon" data-label="Icon" data-value="${esc(b.icon || "")}"></ha-icon-picker>`
+          : text("icon", "Icon", "mdi:car-electric", b.icon)}
+          <div class="field"><label for="gbat-image">Or an image</label>
+            <input id="gbat-image" type="text" maxlength="300" placeholder="/local/car.png" value="${esc(b.image || "")}" data-input="gbat" data-key="image"></div></div>
+        <p class="muted small">An image takes the icon's place: a file in Home Assistant's www folder (/local/car.png), an image uploaded to Home Assistant (its /api/image/serve/… address), or a web address. Best wide, side on and see-through.</p>
         <div class="split">${this._entityField("gbat_chargingline", GLANCE_ENTITIES, "While charging, the line shows (optional)", line.entity)}
           ${text("charging_label", "Called", "Full by", line.label)}</div>
         <p class="muted small">Otherwise it shows the line chosen below.</p>`;
@@ -2793,7 +2809,7 @@ code{font-family:var(--code-font-family,ui-monospace,monospace);font-size:.9em}
 .actrow .icon{width:36px;height:36px;--mdc-icon-size:18px;color:var(--fl-muted)}
 .actrow .icon[disabled]{opacity:.3;cursor:default}
 .opt input[disabled]+.text{opacity:.5}
-ha-entity-picker{display:block}
+ha-entity-picker,ha-icon-picker{display:block}
 .dots{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
 .dot{width:8px;height:8px;border-radius:50%;background:rgba(127,127,127,.35)}
 .dot.on{background:var(--fl-primary)}

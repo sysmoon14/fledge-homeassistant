@@ -28,6 +28,32 @@ def thumbnail(data: bytes, size: int = SIZE) -> bytes | None:
     return out.getvalue()
 
 
+# A battery face's picture: wide and low (a car side on) in the middle of a
+# see-through square, as the thermostat takes any picture square.
+PICTURE = (168, 75)
+
+
+def cutout(data: bytes, box: tuple[int, int] = PICTURE) -> bytes | None:
+    """The picture scaled to fit `box` whole, keeping where it's
+    see-through, in the middle of a see-through square as wide as the box:
+    an RGBA PNG; None if it isn't a picture Pillow reads."""
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return None
+    try:
+        with Image.open(BytesIO(data)) as image:
+            fitted = ImageOps.contain(image.convert("RGBA"), box, Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        return None
+    side = box[0]
+    square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    square.paste(fitted, ((side - fitted.width) // 2, (side - fitted.height) // 2))
+    out = BytesIO()
+    square.save(out, "PNG", optimize=True)
+    return out.getvalue()
+
+
 def screen(data: bytes, size: int = SCREEN) -> bytes | None:
     """A camera's picture for the thermostat to fill its display with, as
     cheaply as can be: a JPEG already small enough (Home Assistant asks the
