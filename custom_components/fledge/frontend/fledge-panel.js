@@ -17,15 +17,15 @@ const KINDS = {
 };
 // What the ring does on each kind of card.
 const RING = {
-  light: [["Turn", "Brightness"], ["Press", "Warmth and colour, where it has them"]],
-  switch: [["Press", "On / off"]], fan: [["Press", "On / off"]], input_boolean: [["Press", "On / off"]],
-  climate: [["Turn", "Target temperature"], ["Press", "Presets"]],
-  media_player: [["Turn", "Volume"], ["Press", "Play / pause"], ["Behind the dial", "Album art"]],
+  light: [["Turn", "Brightness"], ["Hold", "On / off"], ["Press", "Its menu: on / off, warmth and colour where it has them"]],
+  switch: [["Hold", "On / off"], ["Press", "Its menu"]], fan: [["Hold", "On / off"], ["Press", "Its menu"]], input_boolean: [["Hold", "On / off"], ["Press", "Its menu"]],
+  climate: [["Turn", "Target temperature"], ["Press", "Its menu: mode, and presets, fan and swing where it has them"]],
+  media_player: [["Turn", "Volume"], ["Hold", "Play / pause"], ["Press", "Its menu: play / pause, next and previous"], ["Behind the dial", "Album art"]],
   scene: [["Press", "Opens it: press again for Run"], ["Hold, open", "Runs it"]], script: [["Press", "Opens it: press again for Run"], ["Hold, open", "Runs it"]],
   button: [["Press", "Opens it: press again for Run"], ["Hold, open", "Presses it"]], input_button: [["Press", "Opens it: press again for Run"], ["Hold, open", "Presses it"]],
   camera: [["Press", "Full screen"], ["Full screen", "A new picture every 3 s"]],
-  select: [["Turn", "Pick an option"], ["Press", "Choose it"]], input_select: [["Turn", "Pick an option"], ["Press", "Choose it"]],
-  cover: [["Turn", "Position"], ["Press", "Open / close"]],
+  select: [["Press", "Its options: turn to one, press to choose it"]], input_select: [["Press", "Its options: turn to one, press to choose it"]],
+  cover: [["Turn", "Position"], ["Hold", "Open / close"], ["Press", "Its menu: open and close"]],
   alarm_control_panel: [["Press", "Opens it: press again to arm or disarm"], ["Code", "Turn to each digit, press to enter it, hold to rub out"],
     ["Entry delay", "Takes the screen, straight to the code"]],
 };
@@ -543,7 +543,7 @@ const FACES = {
     f.icon(light.icon || card.icon || NEST_ICONS[domainOf(light.id || "")], 240, 98, 40, accent);
     f.label(150, light.name, accent);
     if (!on || !light.dimmable) f.text(240, NUMBER - 8, on ? "On" : "Off", 96);
-    f.line(366, light.dimmable ? (on ? "Hold to turn off" : "Hold to turn on") : (on ? "Press to turn off" : "Press to turn on"), N.GREY);
+    f.line(366, on ? "Hold to turn off" : "Hold to turn on", N.GREY);
     if (light.dimmable && on) f.big(value, false, "%");
   },
   climate(f, card) {
@@ -619,7 +619,7 @@ const FACES = {
     f.icon(card.icon || (open ? "mdi:window-shutter-open" : "mdi:window-shutter"), 240, 98, 40, N.COVER);
     f.label(150, card.name, N.COVER);
     if (!card.positionable) f.text(240, NUMBER - 12, capitalise(card.state), 80);
-    f.line(366, card.positionable ? "How open · press for more" : "Press to open or close", N.GREY);
+    f.line(366, open ? "Hold to close" : "Hold to open", N.GREY);
     if (card.positionable) f.big(value, false, "%");
   },
   // screens.rs alarm_screen, as its card shows it among the others: its
@@ -788,7 +788,9 @@ function glanceFace(f, g, lines, nest, now) {
       if (cell.text) {
         const doing = { charging: "mdi:flash", plugged: "mdi:power-plug", discharging: "mdi:lightning-bolt" }[cell.status] || "mdi:battery";
         const size = Math.max(26, Math.min(34, 34 * 244 / Math.max(1, estimate(cell.text, 34, 0))));
-        const text = fit(cell.text, size, 0, 244);
+        // A touch over the width the size was worked out for: at exactly that
+        // width, rounding cut a line that fits.
+        const text = fit(cell.text, size, 0, 245);
         const left = 240 - (estimate(text, size, 0) + 56) / 2;
         f.icon(doing, left + 21, 338, 44, words);
         f.text(left + 56, 350, text, size, { c: words, anchor: "start", max: 260 });

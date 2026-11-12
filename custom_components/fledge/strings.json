@@ -30,7 +30,7 @@
           "show_thermostat": "Show the thermostat's own card"
         },
         "data_description": {
-          "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
+          "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats, speakers, blinds, cameras, alarms, scenes and scripts. Names, limits, the glance and its faces are set afterwards in the Fledge panel in the sidebar.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
           "wake_device": "Wake straight into one of the devices above instead.",
           "weather": "A weather entity: the Nest's own weather (outside temperature, humidity and forecast) and the glance.",
@@ -69,7 +69,7 @@
           "show_thermostat": "Show the thermostat's own card"
         },
         "data_description": {
-          "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats and media players.",
+          "entities": "Lights (a light group works for a whole room), switches, fans, other thermostats, speakers, blinds, cameras, alarms, scenes and scripts. Names, limits, the glance and its faces are set afterwards in the Fledge panel in the sidebar.",
           "wake": "What shows when you walk up to it, turn the ring or press it while its screen is dark.",
           "wake_device": "Wake straight into one of the devices above instead.",
           "weather": "A weather entity: the Nest's own weather (outside temperature, humidity and forecast) and the glance.",
