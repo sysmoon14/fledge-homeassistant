@@ -22,7 +22,7 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from . import cards, faces, glance
 from .config_flow import options_from, thermostats
 from .feeds import acts_as_thermostat, option_switch, regulates_from_a_sensor, role_switch, wwn_switch
-from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
+from .const import (OWN_LIMITS, CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, CONF_ALARMS, needs, CONF_ENTITIES, CONF_GLANCE, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_NAMES, CONF_SERIAL, CONF_THERMOSTAT, CONF_WAKE, CONF_WAKE_DEVICE, CONF_WEATHER, DOMAIN,
                     DOMAINS, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_FAR, CONF_NEAR,
                     FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE, NEAR_NONE, NEAR_WAKE, presence)
 
@@ -199,7 +199,9 @@ def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, 
     climate = get(msg["climate"]) if msg.get("climate") else None
     connection.send_result(msg["id"], {
         "cards": shown,
-        "thermostat": cards.climate(climate) if climate is not None and climate.domain == "climate" else None,
+        # The Nest's own card, its ring between its limits.
+        "thermostat": (cards.climate(climate, cards.limit_settings(msg[CONF_LIMITS]).get(OWN_LIMITS))
+                       if climate is not None and climate.domain == "climate" else None),
     })
 
 

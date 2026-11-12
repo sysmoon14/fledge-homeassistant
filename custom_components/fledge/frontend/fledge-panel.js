@@ -864,6 +864,10 @@ function glanceFace(f, g, lines, nest, now) {
 }
 
 const THERMO = "@thermostat";
+// The Nest's own card among the limits (const.py OWN_LIMITS), and the card
+// protocol that has them (nestlocal ui::PROTOCOL).
+const OWN_LIMITS = "climate.fledge_own_card";
+const OWN_LIMITS_PROTOCOL = 15;
 // Where Fledge's own build and its check live, among the Nest's entities.
 const own = (t, domain, end) => (t.own || []).find((id) => id.startsWith(`${domain}.`) && id.endsWith(end)) || null;
 // The card protocol that puts the thermostat anywhere (nestlocal ui::PROTOCOL).
@@ -1075,10 +1079,17 @@ class FledgePanel extends HTMLElement {
       battery: face.battery || null, colour: face.colour !== false, night: { ...g.night, mode: "off" } };
   }
 
-  // The cards' limits as saved: only cards shown, only ends given, sorted.
+  // Whose limits the selected card's are kept under: its entity's, or the
+  // Nest's own card's.
+  _limitId() {
+    const id = this._draft.order[this._sel];
+    return id === THERMO ? OWN_LIMITS : id;
+  }
+
+  // The cards' limits as saved: only cards shown (and the Nest's own), only ends given, sorted.
   _limitsFor(entities, draft = this._draft) {
     const out = {};
-    for (const id of [...entities].sort()) {
+    for (const id of [...entities, OWN_LIMITS].sort()) {
       const one = {};
       for (const [what, pair] of Object.entries(draft.limits?.[id] || {}).sort()) {
         if (what.endsWith("_push")) continue;
@@ -1186,6 +1197,13 @@ class FledgePanel extends HTMLElement {
     const version = update?.attributes.installed_version;
     if (!version) return null;
     return short ? version.split("-")[0] : version;
+  }
+
+  // How far the Nest's own ring goes, as its heating entity says (else as
+  // the Nest does in Celsius), for its limits' fields.
+  _ownRange() {
+    const a = this._hass.states[this._current.climate]?.attributes || {};
+    return { min_temp: a.min_temp ?? 9, max_temp: a.max_temp ?? 32 };
   }
 
   // What the Nest's own card shows, from its entities in Home Assistant.
@@ -1455,6 +1473,7 @@ class FledgePanel extends HTMLElement {
         ${this._nameField("cardname")}
         ${this._acting() ? `<div><div class="muted small">On the ring</div>
           ${THERMOSTAT_RING.map(([k, v]) => `<div class="kv"><span class="muted">${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>` : ""}
+        ${this._acting() ? this._limitSettings(OWN_LIMITS, "climate", this._ownRange()) : ""}
         ${old ? `<div class="banner warn inline">The Nest's Fledge build keeps it first until it updates (Thermostat tab).</div>` : ""}
         <div class="actions">${this._moves()}
           ${t.climate ? `<button class="btn ghost" data-act="more" data-id="${esc(t.climate)}">Open</button>` : ""}</div>
@@ -1545,8 +1564,7 @@ class FledgePanel extends HTMLElement {
 
   // Where the ring stops: for each thing it sets, the lowest and highest
   // the Nest can turn it to. Home Assistant can still set it anywhere.
-  _limitSettings(id, domain) {
-    const a = this._hass.states[id]?.attributes || {};
+  _limitSettings(id, domain, a = this._hass.states[id]?.attributes || {}) {
     const kinds = (LIMITS[domain] || []).filter(([, , , range]) => range(a).every((v) => typeof v === "number"))
       .filter(([what]) => domain !== "light" || what !== "brightness" || this._preview.cards[id]?.lights?.[0]?.dimmable)
       .filter(([what]) => domain !== "cover" || this._preview.cards[id]?.positionable);
@@ -1571,7 +1589,9 @@ class FledgePanel extends HTMLElement {
     }).join("");
     return `<div class="group">
         <div class="muted small">Ring limits</div>
-        <p class="muted small">The ring's ends: a full ring is the highest, an empty one the lowest, and the Nest says when it's at one. Blank, as far as it goes. A limit that can be pushed past gives way if you keep turning; one that can't holds. Home Assistant can still set it anywhere.</p>
+        <p class="muted small">The ring's ends: a full ring is the highest, an empty one the lowest, and the Nest says when it's at one. Blank, as far as it goes. A limit that can be pushed past gives way if you keep turning; one that can't holds. Home Assistant can still set it anywhere.${id === OWN_LIMITS ? " The Nest's own dial (Settings on the Nest) and its schedule aren't held to them." : ""}</p>
+        ${id === OWN_LIMITS && limits.temperature && this._current.protocol != null && this._current.protocol < OWN_LIMITS_PROTOCOL
+          ? `<div class="banner warn inline">The Nest's Fledge build is older than limits on its own card: it turns as far as it goes until it updates (Thermostat tab).</div>` : ""}
         ${rows}
       </div>`;
   }
@@ -2333,7 +2353,7 @@ class FledgePanel extends HTMLElement {
         break;
       }
       case "limitpush": {
-        const one = (d.limits[d.order[this._sel]] ||= {});
+        const one = (d.limits[this._limitId()] ||= {});
         const push = (one[`${el.dataset.what}_push`] ||= [false, false]);
         push[Number(el.dataset.end)] = !push[Number(el.dataset.end)];
         this._refreshSoon();
@@ -2441,7 +2461,7 @@ class FledgePanel extends HTMLElement {
       d.names[d.order[this._sel]] = el.value;
       this._render();
     } else if (what === "limit" && e.type === "change") {
-      const id = d.order[this._sel];
+      const id = this._limitId();
       const pair = ((d.limits[id] ||= {})[el.dataset.what] ||= [null, null]);
       const n = el.value.trim() === "" ? null : Number(el.value);
       pair[Number(el.dataset.end)] = Number.isFinite(n) ? n : null;

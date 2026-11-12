@@ -513,7 +513,7 @@ class Thermostat:
                             options.get(CONF_THERMOSTAT, 0), options.get(CONF_ALARMS),
                             {face_id: self.face_card(face_id, face, given=(options.get(CONF_NAMES) or {}).get(face_id))
                              for face_id, face in self.faces.items()},
-                             options.get(CONF_LIMITS))
+                             options.get(CONF_LIMITS), self.hass.config.units.temperature_unit)
         far, near, idle = presence(options)
         shown["presence"] = {"far": far, "near": near}
         shown["card_idle"] = idle

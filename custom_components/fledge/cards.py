@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from .const import CHOICES, RUN, SWITCHED
+from .const import CHOICES, OWN_LIMITS, RUN, SWITCHED
 
 # Colour modes with colours to choose, beyond a white's warmth.
 COLOUR_MODES = ("hs", "rgb", "rgbw", "rgbww", "xy")
@@ -46,7 +46,8 @@ def limit_settings(limits: Mapping[str, Any] | None, entities: Sequence[str] | N
     kept: dict[str, dict[str, list]] = {}
     for entity, settings in (limits or {}).items():
         allowed = LIMITS.get(_domain(str(entity)))
-        if (entities is not None and entity not in entities) or not allowed or not isinstance(settings, Mapping):
+        shown = entities is None or entity in entities or entity == OWN_LIMITS
+        if not shown or not allowed or not isinstance(settings, Mapping):
             continue
         one = {}
         for what, pair in settings.items():
@@ -96,9 +97,12 @@ def pushes(limits: Mapping[str, Any] | None, what: str) -> tuple[bool, bool]:
 
 def limits_level(limits: Mapping[str, Any] | None) -> int:
     """What the cards' limits ask of the Nest's build (const.needs): 0 none,
-    1 limits, 2 a limit that gives way (`limits`: by entity)."""
+    1 limits, 2 a limit that gives way, 3 limits on the Nest's own card
+    (`limits`: by entity)."""
     if not limits:
         return 0
+    if OWN_LIMITS in limits:
+        return 3
     push = any(key.endswith("_push") for settings in limits.values() if isinstance(settings, Mapping) for key in settings)
     return 2 if push else 1
 
@@ -435,7 +439,7 @@ def named(card: dict[str, Any], name: str | None) -> dict[str, Any]:
 def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str | None = None,
           night: bool = False, names: Mapping[str, str] | None = None, thermostat: int = 0,
           alarms: Mapping[str, Any] | None = None, faces: Mapping[str, dict[str, Any]] | None = None,
-          limits: Mapping[str, Any] | None = None) -> dict[str, Any]:
+          limits: Mapping[str, Any] | None = None, unit: str | None = None) -> dict[str, Any]:
     """The cards, a device each in the order chosen, each entity's state
     from `get` (None: unknown to Home Assistant, left out), and what the
     thermostat wakes to: `device`'s place among the cards, else "chooser"
@@ -464,6 +468,12 @@ def cards(entities: Sequence[str], get: Any, wake: str = "chooser", device: str 
     place = sum(1 for e in entities[:max(thermostat, 0)] if known(e))
     if place:
         out["thermostat"] = place
+    # The Nest's own ring's limits, in Home Assistant's scale (`unit`): the
+    # Nest turns them to its own.
+    own = (limits or {}).get(OWN_LIMITS) or {}
+    if isinstance(own.get("temperature"), (list, tuple)):
+        out["thermostat_limits"] = {"temperature": list(own["temperature"]), "push": list(pushes(own, "temperature")),
+                                    "unit": unit or "°C"}
     return out
 
 

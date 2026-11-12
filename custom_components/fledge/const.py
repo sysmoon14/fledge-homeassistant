@@ -43,6 +43,9 @@ CONF_NAMES = "names"
 # Where a card's ring stops, by entity: each of what it sets (cards.LIMITS)
 # as [lowest, highest], either None (protocol 13).
 CONF_LIMITS = "limits"
+# The Nest's own card among them: it has no entity of its own that stays
+# put (its heating entities are made again when its role changes).
+OWN_LIMITS = "climate.fledge_own_card"
 # An alarm's settings, by entity: its modes' names on the Nest ("names", by
 # mode), the modes left off the ring ("hidden"), and how many digits its
 # code has ("code_length"; none: a tick sends it).
@@ -96,12 +99,16 @@ PROTOCOL_FACE = 13
 PROTOCOL_LIMITS = 13
 # A limit that gives way to being turned on past, each end apart.
 PROTOCOL_PUSH = 14
+# Limits on the Nest's own card's ring.
+PROTOCOL_OWN_LIMITS = 15
 
 
 def needs(entities, show_thermostat: bool = True, glance: bool = False, limits: int = 0) -> int:
     """The protocol a thermostat's build needs for these cards, for its
     own card hidden, for a glance of its own (`glance`), and for rings
     with limits (`limits`: cards.limits_level)."""
+    if limits >= 3:
+        return PROTOCOL_OWN_LIMITS
     if limits >= 2:
         return PROTOCOL_PUSH
     if any(str(e).startswith(f"{FACE_DOMAIN}.") for e in entities or []):

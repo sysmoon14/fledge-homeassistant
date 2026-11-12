@@ -1341,3 +1341,22 @@ def test_a_battery_face_s_picture_is_fitted_whole_and_kept_see_through():
     plain = {"battery": {"icon": "mdi:car"}}
     fledge._pictured(plain, "battery:glance")
     assert "picture" not in plain["battery"], "an icon: nothing to send"
+
+
+def test_the_nest_s_own_card_takes_limits_too():
+    from custom_components.fledge.config_flow import options_from
+    own = const.OWN_LIMITS
+    options = options_from({"entities": ["light.a"]}, limits={own: {"temperature": [16, 24], "temperature_push": [False, True]}})
+    assert options["limits"] == {own: {"temperature": [16, 24], "temperature_push": [False, True]}}, "kept, though it's no entity among the cards"
+    assert cards.limits_level(options["limits"]) == 3 and const.needs([], limits=3) == const.PROTOCOL_OWN_LIMITS
+
+    out = cards.cards([], {}.get, limits=options["limits"], unit="°F")
+    assert out["thermostat_limits"] == {"temperature": [16, 24], "push": [False, True], "unit": "°F"}
+    one = cards.cards([], {}.get, limits={own: {"temperature": [None, 22.5]}})
+    assert one["thermostat_limits"] == {"temperature": [None, 22.5], "push": [False, False], "unit": "°C"}
+    assert "thermostat_limits" not in cards.cards([], {}.get, limits={"light.a": {"brightness": [10, 90]}})
+
+    # The panel's picture of it: its heating entity's card, its ring between them.
+    nest = State("climate.nest", "heat", temperature=20, min_temp=9, max_temp=32, target_temp_step=0.5)
+    card = cards.climate(nest, options["limits"][own])
+    assert (card["min"], card["max"], card["temperature_whole"]) == (16, 24, [9, 32])

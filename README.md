@@ -52,8 +52,8 @@ names from an Alarmo card) and say how long the code is, so the last digit
 sends it. Alarm cards need the thermostat on Fledge v0.7.0 or later.
 
 **Ring limits.** Any card with a ring can have a lowest and highest (a
-thermostat's temperature, a speaker's volume, a cover's position, a light's
-brightness and warmth), set on its card in the panel. The ring's ends become
+thermostat's temperature, the Nest's own card included, a speaker's volume, a
+cover's position, a light's brightness and warmth), set on its card in the panel. The ring's ends become
 the limits and the card says *At your limit* there; Home Assistant itself can
 still set anything. Each end can be firm, or **pushed past**: three clicks
 light its arrows, the fourth goes through, and the ring turns amber past it.
@@ -63,7 +63,7 @@ See [Ring limits](https://sysmoon14.github.io/fledge/docs/cards.html#limits).
 big number, your next event or a battery) with actions on its ring: in the
 panel, **Add a card**, then **A glance face**, and design it on the Glance tab.
 See [Face cards](https://sysmoon14.github.io/fledge/docs/cards.html#face-cards). Ring limits and face cards need the
-thermostat on Fledge v0.10.0 or later.
+thermostat on Fledge v0.10.0 or later; limits on the Nest's own card, v0.10.1.
 
 What you open stays open until you go back with its options' Back (a long
 press on the cards themselves puts the screen away); left alone, the screen
