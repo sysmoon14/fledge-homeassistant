@@ -224,6 +224,12 @@ const NEST_ICONS = {
 };
 const sameRgb = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 const css = (c, a = 1) => (a >= 1 ? `rgb(${c.join(",")})` : `rgba(${c.join(",")},${Math.round(a * 1000) / 1000})`);
+// Where a value sits along a ring that stops at its limits ([lowest,
+// highest], from the card), 0..1; without any, along 0 to 100.
+const alongRing = (value, limits) => {
+  const [low, high] = Array.isArray(limits) && limits[0] < limits[1] ? limits : [0, 100];
+  return (value - low) / (high - low);
+};
 const tickAt = (f) => Math.round(Math.max(0, Math.min(1, f)) * (TICKS - 1));
 const tickAngle = (i) => -SPAN / 2 + (SPAN * i) / (TICKS - 1);
 const onCircle = (deg, r) => {
@@ -526,7 +532,7 @@ const FACES = {
     const value = light.brightness ?? 100;
     f.face(N.BLACK);
     if (light.dimmable) {
-      const top = tickAt(value / 100);
+      const top = tickAt(alongRing(value, light.brightness_limits));
       f.ring((i) => (on && i === top ? { c: N.WHITE, shape: "long" } : { c: on && i <= top ? accent : N.DIM, shape: "short" }));
     } else {
       f.ring(() => ({ c: on ? accent : N.DIM, shape: "short" }));
@@ -551,7 +557,7 @@ const FACES = {
   media(f, card, ctx) {
     f.face(N.BLACK);
     const playing = card.state === "playing";
-    const lit = card.volume != null ? tickAt(card.volume / 100) : -1;
+    const lit = card.volume != null ? tickAt(alongRing(card.volume, card.volume_limits)) : -1;
     f.ring((i) => (i <= lit ? { c: N.MEDIA, a: playing ? 1 : 0.45, shape: "short" } : { c: N.DIM, shape: "short" }));
     const accent = playing ? N.MEDIA : N.GREY;
     let top;
@@ -605,7 +611,7 @@ const FACES = {
     const open = card.state === "open" || card.state === "opening";
     const value = card.position ?? (open ? 100 : 0);
     f.face(N.BLACK);
-    const top = tickAt(value / 100);
+    const top = tickAt(alongRing(value, card.position_limits));
     f.ring((i) => (i === top ? { c: N.WHITE, shape: "long" } : { c: i <= top && value > 0 ? N.COVER : N.DIM, shape: "short" }));
     f.icon(card.icon || (open ? "mdi:window-shutter-open" : "mdi:window-shutter"), 240, 98, 40, N.COVER);
     f.label(150, card.name, N.COVER);
@@ -1023,7 +1029,12 @@ class FledgePanel extends HTMLElement {
     for (const id of [...entities].sort()) {
       const one = {};
       for (const [what, pair] of Object.entries(draft.limits?.[id] || {}).sort()) {
-        if (pair && (pair[0] != null || pair[1] != null)) one[what] = [pair[0] ?? null, pair[1] ?? null];
+        if (what.endsWith("_push")) continue;
+        if (!pair || (pair[0] == null && pair[1] == null)) continue;
+        one[what] = [pair[0] ?? null, pair[1] ?? null];
+        // Whether each limit gives way to being turned on past: only one that's set.
+        const push = (draft.limits[id][`${what}_push`] || []).map((on, end) => !!on && pair[end] != null);
+        if (push.some(Boolean)) one[`${what}_push`] = [!!push[0], !!push[1]];
       }
       if (Object.keys(one).length) out[id] = one;
     }
@@ -1481,17 +1492,22 @@ class FledgePanel extends HTMLElement {
       const [low, high] = range(a);
       const [lo, hi] = limits[what] || [null, null];
       const wrong = lo != null && hi != null && lo >= hi;
+      const push = limits[`${what}_push`] || [];
+      const old = this._current.protocol != null && this._current.protocol < 14;
       const field = (end, value, word, fallback) => `<div class="field"><label for="limit-${what}-${end}">${esc(word)}</label>
         <input id="limit-${what}-${end}" type="number" inputmode="decimal" min="${low}" max="${high}" step="${step}"
           placeholder="${esc(`${fallback}${unit}`)}" value="${value ?? ""}" data-input="limit" data-what="${what}" data-end="${end}"
-          aria-label="${esc(`${label}: ${word.toLowerCase()}`)}"></div>`;
+          aria-label="${esc(`${label}: ${word.toLowerCase()}`)}">
+        ${value != null ? `<div class="kv flat"><span class="small">Can be pushed past${old && push[end] ? `<span class="sub">Needs a newer Fledge on the Nest</span>` : ""}</span>
+          <button class="switch ${push[end] ? "on" : ""}" role="switch" aria-checked="${!!push[end]}" aria-label="${esc(`${label}: ${word.toLowerCase()} can be pushed past`)}"
+            data-act="limitpush" data-what="${what}" data-end="${end}"><span class="knob"></span></button></div>` : ""}</div>`;
       return `<div class="muted small">${esc(label)}</div>
         <div class="split">${field(0, lo, "Lowest", low)}${field(1, hi, "Highest", high)}</div>
         ${wrong ? `<div class="banner warn inline">The lowest has to be under the highest, or this limit is ignored.</div>` : ""}`;
     }).join("");
     return `<div class="group">
         <div class="muted small">Ring limits</div>
-        <p class="muted small">The ring's ends: the Nest can't turn it past them. Blank, as far as it goes. Home Assistant can still set it anywhere; opened past a limit, the card waits at that end until you turn.</p>
+        <p class="muted small">The ring's ends: a full ring is the highest, an empty one the lowest, and the Nest says when it's at one. Blank, as far as it goes. A limit that can be pushed past gives way if you keep turning; one that can't holds. Home Assistant can still set it anywhere.</p>
         ${rows}
       </div>`;
   }
@@ -2227,6 +2243,13 @@ class FledgePanel extends HTMLElement {
         this._sel = Math.min(this._sel, d.order.length - 1);
         break;
       }
+      case "limitpush": {
+        const one = (d.limits[d.order[this._sel]] ||= {});
+        const push = (one[`${el.dataset.what}_push`] ||= [false, false]);
+        push[Number(el.dataset.end)] = !push[Number(el.dataset.end)];
+        this._refreshSoon();
+        break;
+      }
       case "wakehere": {
         const id = d.order[this._sel];
         d.wake_device = d.wake_device === id ? null : id;
@@ -2333,7 +2356,10 @@ class FledgePanel extends HTMLElement {
       const pair = ((d.limits[id] ||= {})[el.dataset.what] ||= [null, null]);
       const n = el.value.trim() === "" ? null : Number(el.value);
       pair[Number(el.dataset.end)] = Number.isFinite(n) ? n : null;
-      if (pair[0] == null && pair[1] == null) delete d.limits[id][el.dataset.what];
+      if (pair[0] == null && pair[1] == null) {
+        delete d.limits[id][el.dataset.what];
+        delete d.limits[id][`${el.dataset.what}_push`];
+      }
       this._render();
       this._refreshSoon();
     } else if (what === "alarmname") {

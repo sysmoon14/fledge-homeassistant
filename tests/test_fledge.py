@@ -19,7 +19,7 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
-from custom_components.fledge import art, cards
+from custom_components.fledge import art, cards, const
 from custom_components.fledge.const import DOMAIN
 
 SERIAL = "09AB01AC36230301"
@@ -1254,3 +1254,39 @@ def test_limits_need_a_build_that_parks_the_ring():
                                                                "light.gone": {"brightness": [10, 90]}})
     assert options["limits"] == {"light.a": {"brightness": [10, 90]}}
     assert "limits" not in options_from({"entities": ["light.a"]}, limits={})
+
+
+def test_a_limit_that_gives_way_lets_the_nest_past_that_end_only():
+    limits = cards.limit_settings({
+        "media_player.speaker": {"volume": [10, 50], "volume_push": [False, True]},
+        "climate.kitchen": {"temperature": [18, 25], "temperature_push": [True, True]},
+        "light.lamp": {"brightness": [20, None], "brightness_push": [False, True], "kelvin": [2700, 4000],
+                       "kelvin_push": [1.0, 0.0]},
+        "cover.blind": {"position": [30, 60], "position_push": [False, False]},
+    })
+    assert limits["media_player.speaker"]["volume_push"] == [False, True]
+    assert "brightness_push" not in limits["light.lamp"], "only an end with a limit gives way"
+    assert limits["light.lamp"]["kelvin_push"] == [True, False], "as the panel's numbers say it"
+    assert "position_push" not in limits["cover.blind"], "kept only where one does"
+    assert (cards.limits_level(None), cards.limits_level({"cover.blind": limits["cover.blind"]}), cards.limits_level(limits)) == (0, 1, 2)
+    assert const.needs([], limits=1) == const.PROTOCOL_LIMITS and const.needs([], limits=2) == const.PROTOCOL_PUSH
+
+    kitchen = State("climate.kitchen", "heat", temperature=21, min_temp=7, max_temp=30, target_temp_step=0.5)
+    speaker = State("media_player.speaker", "playing", volume_level=0.4)
+    lamp = State("light.lamp", "on", brightness=128, supported_color_modes=["color_temp"], color_temp_kelvin=3000,
+                 min_color_temp_kelvin=2000, max_color_temp_kelvin=6500)
+    states = {s.entity_id: s for s in (kitchen, speaker, lamp)}
+    climate, media, lights = cards.cards(list(states), states.get, limits=limits)["cards"]
+    assert (climate["min"], climate["max"], climate["temperature_whole"], climate["temperature_push"]) == (18, 25, [7, 30], [True, True])
+    assert media["volume_push"] == [False, True]
+    one = lights["lights"][0]
+    assert (one["kelvins"], one["kelvin_whole"], one["kelvin_push"]) == ([2700, 4000], [2000, 6500], [True, False])
+
+    def sent(entity, action, value):
+        return cards.command({"id": entity, "action": action, "value": value}, list(states), states.get, limits).data
+
+    assert sent("media_player.speaker", "volume", 70) == {"volume_level": 0.7}, "past its highest, which gives way"
+    assert sent("media_player.speaker", "volume", 3) == {"volume_level": 0.1}, "its lowest holds"
+    assert sent("climate.kitchen", "temperature", 28) == {"temperature": 28}
+    assert sent("light.lamp", "color_temp", 2200) == {"color_temp_kelvin": 2200}
+    assert sent("light.lamp", "color_temp", 5000) == {"color_temp_kelvin": 4000}

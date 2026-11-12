@@ -136,7 +136,7 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "room_sensor_switch": option_switch(hass, serial),
         "needs": needs(entry.options.get(CONF_ENTITIES), entry.options.get(CONF_SHOW_THERMOSTAT, True),
                        FAR_GLANCE in presence(entry.options)[:2] and glance.customised(entry.options.get(CONF_GLANCE_SETTINGS)),
-                       bool(entry.options.get(CONF_LIMITS))),
+                       cards.limits_level(entry.options.get(CONF_LIMITS))),
         # The glance's settings, defaults filled in, and whether it's night now.
         "glance": glance.settings(entry.options.get(CONF_GLANCE_SETTINGS)),
         # The glance faces among the cards, by id, defaults filled in.
@@ -240,7 +240,7 @@ def _face_preview(hass: HomeAssistant, running: Any, face_id: str, msg: dict[str
     vol.Optional(CONF_ALARMS): {cv.entity_id: ALARM_SETTINGS},
     # Each [lowest, highest] of what its ring sets; an older panel doesn't
     # send them: kept.
-    vol.Optional(CONF_LIMITS): {cv.entity_id: {str: [vol.Any(None, vol.Coerce(float))]}},
+    vol.Optional(CONF_LIMITS): {cv.entity_id: {str: [vol.Any(None, bool, vol.Coerce(float))]}},
     vol.Optional(CONF_GLANCE_SETTINGS): dict,
     # The glance faces among the cards, by id. An older panel doesn't send
     # them: kept.

@@ -342,7 +342,7 @@ class Thermostat:
         integration needs."""
         issue = f"outdated_{self.serial}"
         if self.protocol is not None and self.protocol >= needs(self.entities, self.entry.options.get(CONF_SHOW_THERMOSTAT, True),
-                                                                self.own_glance(), bool(self.entry.options.get(CONF_LIMITS))):
+                                                                self.own_glance(), cards.limits_level(self.entry.options.get(CONF_LIMITS))):
             ir.async_delete_issue(self.hass, DOMAIN, issue)
         else:
             ir.async_create_issue(self.hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING,

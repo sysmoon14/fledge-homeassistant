@@ -91,12 +91,16 @@ PROTOCOL_FACE = 13
 # Rings stopped at their limits, and a value already past one shown parked
 # at that end.
 PROTOCOL_LIMITS = 13
+# A limit that gives way to being turned on past, each end apart.
+PROTOCOL_PUSH = 14
 
 
-def needs(entities, show_thermostat: bool = True, glance: bool = False, limits: bool = False) -> int:
+def needs(entities, show_thermostat: bool = True, glance: bool = False, limits: int = 0) -> int:
     """The protocol a thermostat's build needs for these cards, for its
     own card hidden, for a glance of its own (`glance`), and for rings
-    with limits."""
+    with limits (`limits`: cards.limits_level)."""
+    if limits >= 2:
+        return PROTOCOL_PUSH
     if any(str(e).startswith(f"{FACE_DOMAIN}.") for e in entities or []):
         return PROTOCOL_FACE
     if limits:

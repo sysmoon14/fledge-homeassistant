@@ -41,7 +41,8 @@ def limit_settings(limits: Mapping[str, Any] | None, entities: Sequence[str] | N
     """Cards' limits as kept: by entity (of `entities`, if given), each of
     what its ring sets (LIMITS) as [lowest, highest], either None for no
     limit that end. Ends outside what it can be, and a lowest not under
-    the highest, are dropped."""
+    the highest, are dropped. Beside one, `<what>_push`: whether its lowest
+    and its highest give way to being turned on past, kept where either does."""
     kept: dict[str, dict[str, list]] = {}
     for entity, settings in (limits or {}).items():
         allowed = LIMITS.get(_domain(str(entity)))
@@ -56,6 +57,11 @@ def limit_settings(limits: Mapping[str, Any] | None, entities: Sequence[str] | N
             if (low is None and high is None) or (low is not None and high is not None and low >= high):
                 continue
             one[what] = [low, high]
+            push = settings.get(f"{what}_push")
+            if isinstance(push, (list, tuple)) and len(push) == 2:
+                push = [bool(push[0]) and low is not None, bool(push[1]) and high is not None]
+                if any(push):
+                    one[f"{what}_push"] = push
         if one:
             kept[entity] = one
     return kept
@@ -81,9 +87,39 @@ def narrowed(low: float, high: float, limits: Mapping[str, Any] | None, what: st
     return (a, b) if a < b else (low, high)
 
 
-def _within(value: float, low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> float:
+def pushes(limits: Mapping[str, Any] | None, what: str) -> tuple[bool, bool]:
+    """Whether a ring's lowest and highest limits give way to being turned
+    on past (`limits`: one entity's)."""
+    push = (limits or {}).get(f"{what}_push")
+    return (bool(push[0]), bool(push[1])) if isinstance(push, (list, tuple)) and len(push) == 2 else (False, False)
+
+
+def limits_level(limits: Mapping[str, Any] | None) -> int:
+    """What the cards' limits ask of the Nest's build (const.needs): 0 none,
+    1 limits, 2 a limit that gives way (`limits`: by entity)."""
+    if not limits:
+        return 0
+    push = any(key.endswith("_push") for settings in limits.values() if isinstance(settings, Mapping) for key in settings)
+    return 2 if push else 1
+
+
+def held(low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> tuple[float, float]:
+    """The range the Nest's commands are kept in: its limits, but as far
+    as `low` or `high` at an end that gives way."""
     a, b = narrowed(low, high, limits, what)
+    under, over = pushes(limits, what)
+    return (low if under else a, high if over else b)
+
+
+def _within(value: float, low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> float:
+    a, b = held(low, high, limits, what)
     return min(max(value, a), b)
+
+
+def _push(limits: Mapping[str, Any] | None, what: str) -> dict[str, Any]:
+    """A card's `<what>_push`, where a limit of its gives way."""
+    push = pushes(limits, what)
+    return {f"{what}_push": list(push)} if any(push) else {}
 
 
 def _ring_limits(low: float, high: float, limits: Mapping[str, Any] | None, what: str) -> dict[str, Any]:
@@ -91,7 +127,7 @@ def _ring_limits(low: float, high: float, limits: Mapping[str, Any] | None, what
     if what not in (limits or {}):
         return {}
     a, b = narrowed(low, high, limits, what)
-    return {f"{what}_limits": [round(a), round(b)]}
+    return {f"{what}_limits": [round(a), round(b)], **_push(limits, what)}
 
 
 class State(Protocol):
@@ -138,8 +174,12 @@ def _shades(state: State, modes: Sequence[str], limits: Mapping[str, Any] | None
     if "color_temp" in modes:
         low, high = attributes.get("min_color_temp_kelvin"), attributes.get("max_color_temp_kelvin")
         if isinstance(low, (int, float)) and isinstance(high, (int, float)) and low < high:
+            whole = [round(low), round(high)]
             low, high = narrowed(low, high, limits, "kelvin")
             out["kelvins"] = [round(low), round(high)]
+            if out["kelvins"] != whole:
+                # Its limits, and how far it goes at all (protocol 14).
+                out.update(kelvin_whole=whole, **_push(limits, "kelvin"))
             kelvin = attributes.get("color_temp_kelvin")
             out["kelvin"] = round(kelvin) if isinstance(kelvin, (int, float)) else None
     if any(mode in COLOUR_MODES for mode in modes):
@@ -188,8 +228,10 @@ def climate(state: State, limits: Mapping[str, Any] | None = None) -> dict[str, 
     temperature limits (`limits`, its own)."""
     attributes = state.attributes
     end = _range_end(state)
-    low, high = narrowed(_number(attributes.get("min_temp")) or 7, _number(attributes.get("max_temp")) or 30,
-                         limits, "temperature")
+    whole = (_number(attributes.get("min_temp")) or 7, _number(attributes.get("max_temp")) or 30)
+    low, high = narrowed(*whole, limits, "temperature")
+    # Its limits, and how far it goes at all (protocol 14).
+    limited = {"temperature_whole": list(whole), **_push(limits, "temperature")} if (low, high) != whole else {}
     target = attributes.get(f"target_temp_{end}") if end else attributes.get("temperature")
     return {
         "kind": "climate",
@@ -203,6 +245,7 @@ def climate(state: State, limits: Mapping[str, Any] | None = None) -> dict[str, 
         "min": low,
         "max": high,
         "step": attributes.get("target_temp_step") or 0.5,
+        **limited,
         "presets": [p for p in attributes.get("preset_modes") or [] if p != "none"][:4],
         "preset": attributes.get("preset_mode"),
         # Its modes (heat, cool, dry, fan_only, off, ...), fan speeds, presets
@@ -223,7 +266,7 @@ def _temperature(state: State | None, value: float, limits: Mapping[str, Any] | 
     """set_temperature's data for `value` from the ring, within its limits:
     its target, or in a heat_cool range the end its card shows, the other
     end kept clear of it (and within them too, where there's room)."""
-    lowest, highest = narrowed(-50.0, 100.0, limits, "temperature")
+    lowest, highest = held(-50.0, 100.0, limits, "temperature")
     value = min(max(value, lowest), highest)
     end = _range_end(state) if state is not None else None
     if end is None:
