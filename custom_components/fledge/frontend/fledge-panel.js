@@ -3,6 +3,9 @@
 // notifications. Plain custom element, no build step; it talks to the
 // integration over the fledge/* websocket commands (panel.py).
 
+// Fledge's documentation, and the page for each of the panel's tabs.
+const DOCS = "https://sysmoon14.github.io/fledge/docs/";
+const DOC_PAGES = { cards: "panel.html#cards", wake: "automations.html#wake-to", glance: "glance.html", notify: "notifications.html", thermostat: "panel.html#thermostat" };
 const ICONS = {
   light: "mdi:lightbulb", switch: "mdi:toggle-switch-variant", fan: "mdi:fan", input_boolean: "mdi:toggle-switch-outline",
   climate: "mdi:thermostat", media_player: "mdi:speaker", scene: "mdi:palette", script: "mdi:script-text-play",
@@ -1349,7 +1352,8 @@ class FledgePanel extends HTMLElement {
       status = `<span class="pill ${online ? "ok" : "bad"}"><span class="dotlet"></span>${online ? "Online" : "Offline"}${build ? ` · Fledge ${esc(build)}` : ""}</span>`;
     }
     const wake = t?.entities?.wake_screen ? `<button class="btn ghost" data-act="wakenow">Wake screen</button>` : "";
-    return `<header class="toolbar">${menu}<h1>Fledge</h1>${picker}<span class="grow"></span>${status}${wake}</header>`;
+    const help = `<a class="icon" href="${DOCS}${DOC_PAGES[this._tab] || "panel.html"}" target="_blank" rel="noopener" title="Documentation" aria-label="Documentation for this tab"><ha-icon icon="mdi:help-circle-outline"></ha-icon></a>`;
+    return `<header class="toolbar">${menu}<h1>Fledge</h1>${picker}<span class="grow"></span>${status}${wake}${help}</header>`;
   }
 
   _tabs() {

@@ -38,7 +38,7 @@ from homeassistant.util import dt as dt_util
 from . import art, cards, faces, glance, panel, schedule
 from .feeds import Feeds
 from .config_flow import thermostats
-from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
+from .const import (DOCS, CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, GLANCE_TRY_TOPIC, ALARM_RESULT_TOPIC, CONF_ALARMS, CONF_SHOW_THERMOSTAT, needs, FAR_GLANCE, presence, CONF_DIM_OFF, CONF_GLANCE, CONF_NAMES, CONF_THERMOSTAT, CONF_WEATHER, ALERT_TOPIC, EVENT_NOTIFICATION, PLATFORMS, ART_TOPIC, CARDS_TOPIC, CHECK_TOPIC, COMMAND_TOPIC, DOMAIN, PROTOCOL_TOPIC, CONF_AREAS, CONF_CLIMATES, CONF_ENTITIES, CONF_EXCLUDE, CONF_MEDIA,
                     CONF_SERIAL, CONF_WAKE, CONF_WAKE_DEVICE, TOPIC_PREFIX, WAKE_CHOOSER)
 
 _LOGGER = logging.getLogger(__name__)
@@ -358,6 +358,7 @@ class Thermostat:
         else:
             ir.async_create_issue(self.hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING,
                                   translation_key="thermostat_outdated",
+                                  learn_more_url=f"{DOCS}updates.html",
                                   translation_placeholders={"serial": self.serial})
 
     @callback

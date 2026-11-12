@@ -123,7 +123,7 @@ class Presence(FledgeEntity, SelectEntity):
 
 # The glance's layouts by name, in the panel's order.
 LAYOUT_NAMES = {"Clock": "clock", "Temperature": "temp", "Weather": "weather", "Analog": "analog",
-                "Big number": "number", "Up next": "agenda"}
+                "Big number": "number", "Up next": "agenda", "Battery": "battery"}
 
 
 class GlanceLayout(FledgeEntity, SelectEntity):

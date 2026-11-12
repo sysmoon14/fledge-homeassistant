@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>Home Assistant on your Nest thermostat's own screen.</b><br>
-  Turn the ring to your lights, heating zones and speakers. Press to take control.
+  Turn the ring to your lights, heating zones and speakers. Press to take control.<br>
+  <a href="https://sysmoon14.github.io/fledge/docs/"><b>Read the documentation</b></a>
 </p>
 
 <p align="center">
@@ -33,6 +34,7 @@ Open, a press shows its options and a long press does its main action:
 | **Option (select)** | its options | through them | | e.g. the Nest's hot water boost |
 | **Blind, cover** | how open | the position | open / close | open, close |
 | **Scene, script, button** | opens it | | runs it | Run |
+| **Face** | a glance face of its own | | the action you chose | Back, then up to four actions: scenes, scripts and buttons run, lights and switches toggle |
 | **Camera** | a fresh picture | | | its latest still fills the card |
 | **Alarm** | its state | the option, or each digit of the code | | arm (its modes, named as you like), Disarm or Cancel; the code entered on the ring |
 | **The Nest itself** | the Nest as it always was | | | Back in its menu returns to the cards |
@@ -48,6 +50,20 @@ past. Three wrong codes lock the pad for 30 seconds, longer each time; the code
 is never stored. In Fledge's panel, name each mode for the Nest (or copy the
 names from an Alarmo card) and say how long the code is, so the last digit
 sends it. Alarm cards need the thermostat on Fledge v0.7.0 or later.
+
+**Ring limits.** Any card with a ring can have a lowest and highest (a
+thermostat's temperature, a speaker's volume, a cover's position, a light's
+brightness and warmth), set on its card in the panel. The ring's ends become
+the limits and the card says *At your limit* there; Home Assistant itself can
+still set anything. Each end can be firm, or **pushed past**: three clicks
+light its arrows, the fourth goes through, and the ring turns amber past it.
+See [Ring limits](https://sysmoon14.github.io/fledge/docs/cards.html#limits).
+
+**Face cards.** A card can be a glance face of its own (a clock, the weather, a
+big number, your next event or a battery) with actions on its ring: in the
+panel, **Add a card**, then **A glance face**, and design it on the Glance tab.
+See [Face cards](https://sysmoon14.github.io/fledge/docs/cards.html#face-cards). Ring limits and face cards need the
+thermostat on Fledge v0.10.0 or later.
 
 What you open stays open until you go back with its options' Back (a long
 press on the cards themselves puts the screen away); left alone, the screen
@@ -66,6 +82,8 @@ which roots the thermostat and runs it locally. It needs a Nest Learning
 Thermostat (3rd generation) running Fledge, connected to Home Assistant over MQTT.
 
 ## Install
+Step by step in the documentation: [Add it to Home Assistant](https://sysmoon14.github.io/fledge/docs/integration.html).
+
 
 1. **Fledge on the thermostat**, with MQTT: it shows up in Home Assistant as a
    "Nest Thermostat" device. See [Fledge](https://github.com/sysmoon14/fledge#get-started).
@@ -102,7 +120,7 @@ thermostat's own, with:
 | `select` **Wake to** | What the thermostat shows as it wakes: the device chooser, **Automatic** (the speaker that's playing, else after sunset a light that's on, else the chooser), the thermostat as the Nest always did, or any of your devices. |
 | `switch` **Keep screen on** | Keeps the thermostat's display lit. |
 | `button` **Wake screen** | Lights the display onto what it wakes to. |
-| `select` **Glance layout** | The glance's layout: Clock, Temperature, Weather, Analog, Big number or Up next. Each keeps the lines you chose for it. |
+| `select` **Glance layout** | The glance's layout: Clock, Temperature, Weather, Analog, Big number, Up next or Battery. Each keeps the lines you chose for it. |
 | `binary_sensor` **Night glance** | On while the Nest shows the glance's night layout. |
 
 In **Configure**, **A glance as someone comes near** makes the Nest, when it
@@ -115,7 +133,10 @@ saving:
 
 - **Layout**: the time large (Clock), the room's temperature (Temperature,
   orange or blue while heating or cooling), the weather outside, a clock face
-  (Analog), one sensor's value (Big number) or your next calendar event (Up next).
+  (Analog), one sensor's value (Big number), your next calendar event (Up next),
+  or a battery's level as the ring (Battery: a car, a home battery, a mower;
+  green while charging, amber then red when low, a notch at its charge limit,
+  with an icon or an image).
 - **Clock**: 12 or 24 hours, or Automatic from where Home Assistant is, and AM / PM.
 - **Lines**: up to three under the big element. The Nest works out the date, the
   time, its temperature and humidity, its heating and time to temperature, the
@@ -137,8 +158,8 @@ saving:
   switch is on (or off), drawn dimmer and warmer if you like, as dim as you
   choose. (This dims what's drawn; the Nest keeps its own backlight level.)
 
-The glance's layouts need the Nest on Fledge 0.9.0 or later; an older build
-shows the clock as before.
+The glance's layouts need the Nest on Fledge 0.9.0 or later (Battery 0.10.0);
+an older build shows the clock as before. More in [The glance](https://sysmoon14.github.io/fledge/docs/glance.html).
 
 So the thermostat can show what matters right now, for example the speaker
 while music plays, and the device chooser otherwise:

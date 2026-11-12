@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Fledge",
-        "description": "Choose the Nest thermostat running Fledge. It has to be connected to Home Assistant over MQTT first.",
+        "description": "Choose the Nest thermostat running Fledge. It has to be connected to Home Assistant over MQTT first. New to Fledge? Read [the documentation]({docs}).",
         "data": {
           "serial": "Thermostat"
         }
@@ -15,7 +15,7 @@
       },
       "cards": {
         "title": "What the thermostat shows",
-        "description": "Each device is a card on the thermostat, in this order (drag to reorder). Turn the ring to browse them, press to open one: a light dims, a switch switches, a thermostat sets its temperature, a speaker its volume.",
+        "description": "Each device is a card on the thermostat, in this order (drag to reorder). Turn the ring to browse them, press to open one: a light dims, a switch switches, a thermostat sets its temperature, a speaker its volume. After setup, arrange them in the Fledge panel in the sidebar. [How the cards work]({docs}cards.html).",
         "data": {
           "entities": "Devices",
           "wake": "When the thermostat wakes",
@@ -54,7 +54,7 @@
     "step": {
       "init": {
         "title": "What the thermostat shows",
-        "description": "Each device is a card on the thermostat, in this order (drag to reorder). Turn the ring to browse them, press to open one: a light dims, a switch switches, a thermostat sets its temperature, a speaker its volume.",
+        "description": "Each device is a card on the thermostat, in this order (drag to reorder). Turn the ring to browse them, press to open one: a light dims, a switch switches, a thermostat sets its temperature, a speaker its volume. [How the cards work]({docs}cards.html).",
         "data": {
           "entities": "Devices",
           "wake": "When the thermostat wakes",

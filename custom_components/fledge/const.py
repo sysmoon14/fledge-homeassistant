@@ -2,6 +2,9 @@
 
 DOMAIN = "fledge"
 
+# Fledge's documentation (GitHub Pages of sysmoon14/fledge): DOCS + "<page>.html".
+DOCS = "https://sysmoon14.github.io/fledge/docs/"
+
 # nestlocal, on the thermostat, publishes and listens under nestlocal/<serial>.
 TOPIC_PREFIX = "nestlocal"
 

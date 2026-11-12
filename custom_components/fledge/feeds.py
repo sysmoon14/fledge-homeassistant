@@ -22,7 +22,7 @@ from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from .config_flow import thermostats
-from .const import (CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_WEATHER, DOMAIN, HUMIDITY_TOPIC, OUTDOOR_TOPIC, ROOM_TOPIC,
+from .const import (DOCS, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_WEATHER, DOMAIN, HUMIDITY_TOPIC, OUTDOOR_TOPIC, ROOM_TOPIC,
                     TOPIC_PREFIX, WEATHER_TOPIC)
 
 _LOGGER = logging.getLogger(__name__)
@@ -258,6 +258,7 @@ class Feeds:
                                   severity=ir.IssueSeverity.WARNING,
                                   translation_key="room_sensor_switch" if switch else "room_sensor_unsupported",
                                   translation_placeholders={"serial": self.serial, "sensor": self.room or ""},
+                                  learn_more_url=f"{DOCS}weather.html#room-thermometer",
                                   data={"serial": self.serial})
             return
         ir.async_delete_issue(self.hass, DOMAIN, self.issue)

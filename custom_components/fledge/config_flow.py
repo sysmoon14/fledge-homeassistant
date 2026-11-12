@@ -12,7 +12,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
 from . import cards, faces
-from .const import (CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
+from .const import (DOCS, CONF_FACES, CONF_LIMITS, CONF_GLANCE_SETTINGS, CONF_ALARMS, CONF_CARD_IDLE, CONF_DIM_OFF, CONF_SHOW_THERMOSTAT, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_ENTITIES, CONF_FAR, CONF_GLANCE, CONF_NAMES, CONF_NEAR, CONF_SERIAL, CONF_THERMOSTAT,
                     CONF_WEATHER, CONF_WAKE, CONF_WAKE_DEVICE, DOMAIN, DOMAINS, FAR_DARK, FAR_GLANCE, FAR_WAKE, NEAR_GLANCE,
                     NEAR_NONE, NEAR_WAKE, TOPIC_PREFIX, WAKE_AUTO, WAKE_CHOOSER, WAKE_THERMOSTAT, presence)
 
@@ -164,14 +164,15 @@ class FledgeConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_cards()
         return self.async_show_form(step_id="user", data_schema=vol.Schema({
             vol.Required(CONF_SERIAL): vol.In(choices),
-        }))
+        }), description_placeholders={"docs": DOCS})
 
     async def async_step_cards(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         assert self._serial is not None
         if user_input is not None:
             return self.async_create_entry(title=_title(self.hass, self._serial),
                                            data={CONF_SERIAL: self._serial}, options=options_from(user_input))
-        return self.async_show_form(step_id="cards", data_schema=_cards_schema(self.hass, self._serial, {}))
+        return self.async_show_form(step_id="cards", data_schema=_cards_schema(self.hass, self._serial, {}),
+                                    description_placeholders={"docs": DOCS})
 
     @staticmethod
     @callback
@@ -198,4 +199,5 @@ class FledgeOptionsFlow(OptionsFlow):
                                                              self.config_entry.options.get(CONF_LIMITS)))
         serial = self.config_entry.data[CONF_SERIAL]
         return self.async_show_form(step_id="init",
-                                    data_schema=_cards_schema(self.hass, serial, dict(self.config_entry.options)))
+                                    data_schema=_cards_schema(self.hass, serial, dict(self.config_entry.options)),
+                                    description_placeholders={"docs": DOCS})
