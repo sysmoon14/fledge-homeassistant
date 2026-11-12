@@ -30,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # The layouts, and how many lines each has room for (nestlocal's
 # ui::model::Layout::slots).
-SLOTS = {"clock": 3, "temp": 2, "weather": 2, "analog": 1, "number": 2, "agenda": 1}
+SLOTS = {"clock": 3, "temp": 2, "weather": 2, "analog": 1, "number": 2, "agenda": 1, "battery": 1}
 LAYOUTS = list(SLOTS)
 # Lines the Nest works out itself, sent as their kind.
 NEST_KINDS = ("date", "date_short", "time", "inside", "heating", "whats_on", "weather")
@@ -45,6 +45,7 @@ DEFAULT_LINES = {
     "analog": ["date"],
     "number": ["time", "none"],
     "agenda": ["weather"],
+    "battery": ["none"],
 }
 NIGHT_MODES = ("off", "sun", "hours", "sensor")
 # Countries whose clocks read 12 hours, for Automatic.
@@ -77,6 +78,26 @@ LINE = vol.Schema({
     vol.Optional("value"): vol.Any(None, vol.All(str, vol.Length(max=40))),
     vol.Optional("else"): vol.In(FALLBACKS),
 })
+# The battery face: the entity with its level in percent, and optionally
+# whether it's charging and plugged in, the power going in or out, and its
+# charge limit; under what it counts as low and very low; its picture (an
+# icon; the level's own without) and name; the line under its status
+# while it charges (its layout's line shows otherwise).
+BATTERY = vol.Schema({
+    vol.Optional("level"): vol.Any(None, cv.entity_id),
+    vol.Optional("charging"): vol.Any(None, cv.entity_id),
+    vol.Optional("plugged"): vol.Any(None, cv.entity_id),
+    vol.Optional("power"): vol.Any(None, cv.entity_id),
+    vol.Optional("limit"): vol.Any(None, cv.entity_id),
+    vol.Optional("low", default=20): vol.All(int, vol.Range(min=0, max=100)),
+    vol.Optional("critical", default=10): vol.All(int, vol.Range(min=0, max=100)),
+    vol.Optional("icon"): vol.Any(None, vol.All(str, vol.Length(max=60))),
+    vol.Optional("label"): vol.Any(None, vol.All(str, vol.Length(max=40))),
+    vol.Optional("charging_line"): vol.Any(None, LINE),
+})
+# States that say a battery is charging, or plugged in.
+CHARGING = ("on", "charging", "true")
+PLUGGED = ("on", "plugged", "plugged_in", "connected", "true", "home")
 NAME = vol.All(str, vol.Length(min=1, max=24))
 # The date's words in another language, as the panel (the browser) names
 # them: days from Sunday, months from January.
@@ -95,6 +116,7 @@ SCHEMA = vol.Schema({
     vol.Optional("lines", default={}): LINES,
     vol.Optional("big"): vol.Any(None, cv.entity_id),
     vol.Optional("big_label"): vol.Any(None, vol.All(str, vol.Length(max=40))),
+    vol.Optional("battery"): vol.Any(None, BATTERY),
     vol.Optional("calendar"): vol.Any(None, cv.entity_domain("calendar")),
     # Up next and the next event's line look through all of these (with
     # none, `calendar`, from before there could be several).
@@ -613,6 +635,55 @@ class Sources:
                 "unit": str(state.attributes.get("unit_of_measurement") or "")}
 
 
+def _reading(state: State | None) -> float | None:
+    try:
+        return float(state.state) if state is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def battery(hass: HomeAssistant, spec: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The battery face's: its level, what it's doing (charging, plugged
+    in, discharging, idle) in a word and in a line, its charge limit, and
+    its picture and name. Without a charging entity, power going in counts
+    as charging."""
+    spec = spec or {}
+    get = lambda key: hass.states.get(spec.get(key) or "")  # noqa: E731
+    level_state = get("level")
+    if level_state is None:
+        return None
+    level = _reading(level_state)
+    low, critical = spec.get("low", 20), spec.get("critical", 10)
+    power_state = get("power")
+    power = _reading(power_state)
+    flow = ""
+    if power_state is not None and power:
+        shown = number(hass, power_state).lstrip("-−")
+        flow = f"{shown} {power_state.attributes.get('unit_of_measurement') or ''}".strip()
+    charging_state, plugged_state = get("charging"), get("plugged")
+    if charging_state is not None:
+        charging = charging_state.state.lower() in CHARGING
+    else:
+        charging = bool(power and power > 0)
+    plugged = plugged_state is not None and plugged_state.state.lower() in PLUGGED
+    if charging:
+        status, text = "charging", " · ".join(filter(None, ("Charging", flow)))
+    elif plugged:
+        status, text = "plugged", "Plugged in"
+    elif flow:
+        status, text = "discharging", f"Discharging · {flow}"
+    elif level is not None and level <= critical:
+        status, text = "idle", "Battery very low"
+    elif level is not None and level <= low:
+        status, text = "idle", "Battery low"
+    else:
+        status, text = "idle", ""
+    name = (spec.get("label") or "").strip() or level_state.attributes.get("friendly_name") or level_state.entity_id
+    return {"label": str(name)[:40], "level": None if level is None else max(0.0, min(100.0, level)), "status": status,
+            "text": text, "limit": _reading(get("limit")), "low": low, "critical": critical,
+            "icon": spec.get("icon") or level_state.attributes.get("icon") or "mdi:battery"}
+
+
 def build(sources: Sources, chosen: dict[str, Any], night: bool, base: dict[str, Any]) -> dict[str, Any]:
     """The glance as the Nest takes it: `base` (its offset and weather)
     with the day's or the night's layout and lines."""
@@ -632,6 +703,14 @@ def build(sources: Sources, chosen: dict[str, Any], night: bool, base: dict[str,
         big = sources.big(chosen.get("big"), chosen.get("big_label"))
         if big:
             out["big"] = big
+    if layout == "battery":
+        shown = battery(sources.hass, chosen.get("battery"))
+        if shown:
+            out["battery"] = shown
+            other = (chosen.get("battery") or {}).get("charging_line")
+            if shown["status"] == "charging" and other:
+                # While it charges: its own line (when it'll be full).
+                out["lines"] = [said for said in (sources.line(other),) if said != {"text": ""}]
     if layout == "agenda":
         event = sources.event()
         if event:
@@ -656,6 +735,11 @@ def watched(chosen: dict[str, Any]) -> list[str]:
                 entities.add(spec["entity"])
     if chosen.get("big"):
         entities.add(chosen["big"])
+    cell = chosen.get("battery") or {}
+    entities.update(cell[key] for key in ("level", "charging", "plugged", "power", "limit") if cell.get(key))
+    other = cell.get("charging_line") or {}
+    if other.get("source") in ("entity", "playing") and other.get("entity"):
+        entities.add(other["entity"])
     return sorted(entities)
 
 

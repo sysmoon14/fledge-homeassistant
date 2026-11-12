@@ -28,9 +28,9 @@ ACTION_DOMAINS = (*SWITCHED, *RUN)
 MAX_ACTIONS = 4
 # A face's name until it's given one: its layout's.
 LAYOUT_NAMES = {"clock": "Clock", "temp": "Temperature", "weather": "Weather", "analog": "Clock",
-                "number": "Number", "agenda": "Up next"}
+                "number": "Number", "agenda": "Up next", "battery": "Battery"}
 LAYOUT_ICONS = {"clock": "mdi:clock-outline", "temp": "mdi:thermometer", "weather": "mdi:weather-partly-cloudy",
-                "analog": "mdi:clock-time-four-outline", "number": "mdi:numeric", "agenda": "mdi:calendar"}
+                "analog": "mdi:clock-time-four-outline", "number": "mdi:numeric", "agenda": "mdi:calendar", "battery": "mdi:battery"}
 # The glance's settings a face shares rather than has its own.
 SHARED = ("hours", "ampm", "calendar", "calendars", "skip_all_day", "date", "words", "language")
 
@@ -49,6 +49,7 @@ SCHEMA = vol.Schema({
     vol.Optional("big"): vol.Any(None, cv.entity_id),
     vol.Optional("big_label"): vol.Any(None, vol.All(str, vol.Length(max=40))),
     vol.Optional("colour", default=True): bool,
+    vol.Optional("battery"): vol.Any(None, glance.BATTERY),
     vol.Optional("actions", default=[]): vol.All([action_entity], vol.Length(max=MAX_ACTIONS)),
     # What a hold does: one of its actions, or nothing.
     vol.Optional("hold"): vol.Any(None, action_entity),
@@ -87,7 +88,7 @@ def glance_raw(face: dict[str, Any], shared: dict[str, Any] | None) -> dict[str,
     """The glance settings a face is drawn from: its own layout and lines
     with the glance's shared settings, and no night."""
     out = {k: v for k, v in (shared or {}).items() if k in SHARED}
-    out.update({k: face[k] for k in ("layout", "lines", "big", "big_label", "colour") if face.get(k) is not None})
+    out.update({k: face[k] for k in ("layout", "lines", "big", "big_label", "colour", "battery") if face.get(k) is not None})
     out["night"] = {"mode": "off"}
     return out
 

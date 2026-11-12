@@ -70,6 +70,7 @@ const GLANCE_LAYOUTS = [
   ["clock", "Clock", "Time, date and lines"], ["temp", "Temperature", "The room, big"],
   ["weather", "Weather", "Outside, big"], ["analog", "Analog", "A clock face"],
   ["number", "Big number", "Any sensor"], ["agenda", "Up next", "Your next event"],
+  ["battery", "Battery", "A car, a home battery"],
 ];
 const GLANCE_PLACES = {
   clock: [[290, "quiet", 380], [352, "main", 330], [404, "pill", 290]],
@@ -78,10 +79,12 @@ const GLANCE_PLACES = {
   analog: [[350, "quiet", 320]],
   number: [[370, "quiet", 320], [418, "pill", 230]],
   agenda: [[370, "main", 320]],
+  battery: [[398, "quiet", 280]],
 };
 const GLANCE_DEFAULTS = {
   clock: ["date", "weather", "whats_on"], temp: ["heating", "weather"], weather: ["forecast", "rain"],
   analog: ["date"], number: ["time", "none"], agenda: ["weather"],
+  battery: ["none"],
 };
 const GLANCE_SOURCES = [
   ["On the Nest", [["date", "Date"], ["date_short", "Short date"], ["time", "Time"], ["inside", "Inside temperature and humidity"],
@@ -114,9 +117,9 @@ const GLANCE_WHENS = [["always", "Always"], ["on", "Only while it's on"], ["off"
 // they're called until named, their icons, and what their actions can be.
 const FACE = "fledge_face.";
 const isFace = (id) => typeof id === "string" && id.startsWith(FACE);
-const FACE_NAMES = { clock: "Clock", temp: "Temperature", weather: "Weather", analog: "Clock", number: "Number", agenda: "Up next" };
+const FACE_NAMES = { clock: "Clock", temp: "Temperature", weather: "Weather", analog: "Clock", number: "Number", agenda: "Up next", battery: "Battery" };
 const FACE_ICONS = { clock: "mdi:clock-outline", temp: "mdi:thermometer", weather: "mdi:weather-partly-cloudy",
-  analog: "mdi:clock-time-four-outline", number: "mdi:numeric", agenda: "mdi:calendar" };
+  analog: "mdi:clock-time-four-outline", number: "mdi:numeric", agenda: "mdi:calendar", battery: "mdi:battery" };
 const FACE_ACTIONS = "light,switch,fan,input_boolean,scene,script,button,input_button";
 const FACE_MAX_ACTIONS = 4;
 // The card protocol that has faces (nestlocal ui::PROTOCOL).
@@ -695,10 +698,19 @@ const FACES = {
 // The glance as nestlocal draws it (screens.rs glance_still): `g` as the
 // Nest takes it, `lines` in words ({text, icon, kind}), `nest` the
 // thermostat's {current, action, fahrenheit}, `now` Unix seconds.
+const BATTERY_CHARGING = [14, 140, 69];
+const BATTERY_RING = [[72, 214, 130], [255, 59, 59], [246, 136, 0]];
+const BATTERY_WORDS = [[123, 227, 164], [255, 122, 122], [255, 176, 82]];
+
 function glanceFace(f, g, lines, nest, now) {
   const layout = g.layout || "clock";
   const heating = nest && ["heating", "preheating"].includes(nest.action);
-  const bg = layout === "temp" && g.colour !== false && nest ? (heating ? N.HEAT : nest.action === "cooling" ? N.COOL : N.BLACK) : N.BLACK;
+  // Charging fills the Nest's face, as heating does (screens.rs battery_face).
+  const cell = layout === "battery" ? g.battery : null;
+  const cellLevel = cell?.level == null ? null : Math.max(0, Math.min(100, cell.level));
+  const mood = !cell ? null : cell.status === "charging" ? 0 : (cellLevel ?? 100) <= (cell.critical ?? 10) ? 1 : (cellLevel ?? 100) <= (cell.low ?? 20) ? 2 : null;
+  const bg = layout === "battery" ? (!f.fledge && mood === 0 ? BATTERY_CHARGING : N.BLACK)
+    : layout === "temp" && g.colour !== false && nest ? (heating ? N.HEAT : nest.action === "cooling" ? N.COOL : N.BLACK) : N.BLACK;
   const coloured = !sameRgb(bg, N.BLACK);
   f.face(bg);
   const offset = g.offset || 0;
@@ -750,6 +762,36 @@ function glanceFace(f, g, lines, nest, now) {
     const value = String(big.value || "").trim() || "–";
     raw(240, 270, esc(value), sized(value, f.fledge ? 170 : 140, 400), N.WHITE, { weight: f.fledge ? 200 : 300, spacing: -3 });
     if (big.unit) f.text(240, 316, big.unit, 28, { c: FLEDGE_ON, max: 280 });
+  } else if (layout === "battery") {
+    if (!cell) {
+      label(150, "Battery");
+      raw(240, NUMBER, "–", 170, N.WHITE);
+      f.text(240, 352, "No battery chosen", 26, { c: GLANCE_QUIET });
+    } else {
+      const ring = coloured ? N.WHITE : mood == null ? (f.fledge ? GLANCE_QUIET : N.WHITE) : BATTERY_RING[mood];
+      const words = coloured || mood == null ? N.WHITE : BATTERY_WORDS[mood];
+      const top = cellLevel > 0 ? tickAt(cellLevel / 100) : -1;
+      const limit = cell.limit > 0 && cell.limit < 100 ? tickAt(cell.limit / 100) : -1;
+      f.ring((i) => (i === limit && !f.fledge ? { c: N.WHITE, shape: "long" }
+        : i <= top ? { c: ring, shape: "short" } : { c: coloured ? N.WHITE : N.DIM, a: coloured ? 0.38 : 1, shape: "short" }));
+      if (limit >= 0 && f.fledge) {
+        const [x1, y1] = onCircle(-146 + 292 * cell.limit / 100, 199);
+        const [x2, y2] = onCircle(-146 + 292 * cell.limit / 100, 225);
+        f.svg.push(`<line x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}" stroke="#fff" stroke-opacity="0.85" stroke-width="3" stroke-linecap="round"/>`);
+      }
+      f.icon(cell.icon || "mdi:battery", 240, 96, 52, coloured || mood == null ? N.WHITE : ring);
+      label(156, cell.label || "");
+      if (cellLevel == null) raw(240, NUMBER, "–", 170, N.WHITE);
+      else f.big(Math.round(cellLevel), false, "%");
+      if (cell.text) {
+        const doing = { charging: "mdi:flash", plugged: "mdi:power-plug", discharging: "mdi:lightning-bolt" }[cell.status] || "mdi:battery";
+        const size = Math.max(26, Math.min(34, 34 * 244 / Math.max(1, estimate(cell.text, 34, 0))));
+        const text = fit(cell.text, size, 0, 244);
+        const left = 240 - (estimate(text, size, 0) + 56) / 2;
+        f.icon(doing, left + 21, 338, 44, words);
+        f.text(left + 56, 350, text, size, { c: words, anchor: "start", max: 260 });
+      }
+    }
   } else if (layout === "agenda") {
     raw(240, 122, esc(glanceTime(minutes, twelve, ampm)), 56, N.WHITE, { spacing: -1 });
     label(178, "Up next");
@@ -1006,7 +1048,7 @@ class FledgePanel extends HTMLElement {
     return Object.fromEntries(this._entities(draft).filter(isFace).map((id) => {
       const f = draft.faces[id] || {};
       return [id, { layout: f.layout || "clock", lines: f.lines || {}, big: f.big || null, big_label: f.big_label || null,
-        colour: f.colour !== false, actions: f.actions || [], hold: (f.actions || []).includes(f.hold) ? f.hold : null }];
+        battery: f.battery || null, colour: f.colour !== false, actions: f.actions || [], hold: (f.actions || []).includes(f.hold) ? f.hold : null }];
     }));
   }
 
@@ -1020,7 +1062,7 @@ class FledgePanel extends HTMLElement {
   _faceGlance(face) {
     const g = this._draft.glance;
     return { ...g, layout: face.layout || "clock", lines: face.lines || {}, big: face.big || null, big_label: face.big_label || null,
-      colour: face.colour !== false, night: { ...g.night, mode: "off" } };
+      battery: face.battery || null, colour: face.colour !== false, night: { ...g.night, mode: "off" } };
   }
 
   // The cards' limits as saved: only cards shown, only ends given, sorted.
@@ -1847,6 +1889,25 @@ class FledgePanel extends HTMLElement {
       extras = `${this._entityField("gbig", "sensor,input_number,number,counter", "The number", target.big)}
         ${target.big ? "" : `<p class="now muted">Choose a sensor with a number: a price, a power, a battery.</p>`}
         <div class="field"><label for="gbiglabel">Called</label><input id="gbiglabel" type="text" maxlength="40" placeholder="Its name" value="${esc(target.big_label || "")}" data-input="gbiglabel"></div>`;
+    } else if (layout === "battery") {
+      const b = target.battery || {};
+      const line = b.charging_line || {};
+      const text = (key, label, placeholder, value) => `<div class="field"><label for="gbat-${key}">${esc(label)}</label>
+        <input id="gbat-${key}" type="text" maxlength="60" placeholder="${esc(placeholder)}" value="${esc(value || "")}" data-input="gbat" data-key="${key}"></div>`;
+      const percent = (key, label, value) => `<div class="field"><label for="gbat-${key}">${esc(label)}</label>
+        <input id="gbat-${key}" type="number" min="0" max="100" value="${esc(value)}" data-input="gbat" data-key="${key}"></div>`;
+      extras = `${this._entityField("gbat_level", "sensor,input_number,number", "Level (a percentage)", b.level)}
+        ${b.level ? "" : `<p class="now muted">Choose anything with a battery percentage: a car, a home battery, a mower.</p>`}
+        <div class="split">${this._entityField("gbat_charging", "binary_sensor,switch,input_boolean,sensor", "Charging (optional)", b.charging)}
+          ${this._entityField("gbat_plugged", "binary_sensor,switch,input_boolean,sensor", "Plugged in (optional)", b.plugged)}</div>
+        <div class="split">${this._entityField("gbat_power", "sensor", "Power (optional)", b.power)}
+          ${this._entityField("gbat_limit", "number,input_number,sensor", "Charge limit (optional)", b.limit)}</div>
+        <div class="split">${percent("low", "Low below (%)", b.low ?? 20)}${percent("critical", "Very low below (%)", b.critical ?? 10)}</div>
+        <p class="muted small">The line under the number is worked out from these: Charging · 7.2 kW, Plugged in, or a discharge's power. Without a charging entity, power going in counts as charging. The white notch on the ring is the charge limit.</p>
+        <div class="split">${text("label", "Called", "Its name", b.label)}${text("icon", "Icon", "mdi:car-electric", b.icon)}</div>
+        <div class="split">${this._entityField("gbat_chargingline", GLANCE_ENTITIES, "While charging, the line shows (optional)", line.entity)}
+          ${text("charging_label", "Called", "Full by", line.label)}</div>
+        <p class="muted small">Otherwise it shows the line chosen below.</p>`;
     } else if (layout === "temp") {
       extras = `<div class="kv flat"><span>Colour the screen while heating or cooling<span class="sub">Orange or blue, as the Nest's own Farsight</span></span>${sw("gcolour", target.colour !== false, "Colour the screen while heating or cooling")}</div>`;
     } else if (layout === "agenda" && !g.calendars.length) {
@@ -2443,6 +2504,17 @@ class FledgePanel extends HTMLElement {
       else this._saveBarOnly();
       return true;
     }
+    if (what === "gbat") {
+      const b = (this._glanceEditing().own.battery ||= {});
+      const key = el.dataset.key;
+      if (key === "low" || key === "critical") b[key] = Math.max(0, Math.min(100, Math.round(Number(el.value) || 0)));
+      else if (key === "charging_label") {
+        if (b.charging_line) b.charging_line.label = el.value.trim() || null;
+      } else b[key] = el.value.trim() || null;
+      if (change) this._glanceSoon();
+      else this._saveBarOnly();
+      return true;
+    }
     if (what === "gbiglabel") {
       this._glanceEditing().own.big_label = el.value;
       if (change) this._glanceSoon();
@@ -2530,6 +2602,10 @@ class FledgePanel extends HTMLElement {
     if (key.startsWith("gline")) {
       this._glanceLine(Number(key.slice(5))).entity = value || null;
     } else if (key === "gbig") this._glanceEditing().own.big = value || null;
+    else if (key === "gbat_chargingline") {
+      const b = (this._glanceEditing().own.battery ||= {});
+      b.charging_line = value ? { source: "entity", entity: value, label: b.charging_line?.label || null } : null;
+    } else if (key.startsWith("gbat_")) (this._glanceEditing().own.battery ||= {})[key.slice(5)] = value || null;
     else if (key.startsWith("gcal")) {
       const chosen = [...g.calendars];
       chosen[Number(key.slice(4))] = value || "";

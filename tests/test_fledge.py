@@ -1290,3 +1290,33 @@ def test_a_limit_that_gives_way_lets_the_nest_past_that_end_only():
     assert sent("climate.kitchen", "temperature", 28) == {"temperature": 28}
     assert sent("light.lamp", "color_temp", 2200) == {"color_temp_kelvin": 2200}
     assert sent("light.lamp", "color_temp", 5000) == {"color_temp_kelvin": 4000}
+
+
+async def test_the_battery_face_says_what_the_battery_is_doing(hass: HomeAssistant):
+    from custom_components.fledge import faces, glance
+    hass.states.async_set("sensor.car_battery", "64", {"friendly_name": "Family car", "unit_of_measurement": "%", "icon": "mdi:car-electric"})
+    hass.states.async_set("binary_sensor.car_charging", "on")
+    hass.states.async_set("binary_sensor.car_plugged", "on")
+    hass.states.async_set("sensor.wallbox_power", "7.2", {"unit_of_measurement": "kW"})
+    hass.states.async_set("number.car_limit", "80")
+    spec = {"level": "sensor.car_battery", "charging": "binary_sensor.car_charging", "plugged": "binary_sensor.car_plugged",
+            "power": "sensor.wallbox_power", "limit": "number.car_limit"}
+    chosen = glance.settings({"layout": "battery", "battery": spec})
+    assert glance.watched(chosen) == sorted(spec.values())
+    shown = glance.battery(hass, chosen["battery"])
+    assert shown == {"label": "Family car", "level": 64.0, "status": "charging", "text": "Charging · 7.2 kW", "limit": 80.0,
+                     "low": 20, "critical": 10, "icon": "mdi:car-electric"}
+    hass.states.async_set("binary_sensor.car_charging", "off")
+    assert glance.battery(hass, chosen["battery"])["text"] == "Plugged in"
+    hass.states.async_set("binary_sensor.car_plugged", "off")
+    hass.states.async_set("sensor.wallbox_power", "0", {"unit_of_measurement": "kW"})
+    hass.states.async_set("sensor.car_battery", "8")
+    low = glance.battery(hass, chosen["battery"])
+    assert (low["status"], low["text"], low["label"]) == ("idle", "Battery very low", "sensor.car_battery")
+    # Without a charging entity, power going in counts; going out is a discharge.
+    hass.states.async_set("sensor.wallbox_power", "-1.4", {"unit_of_measurement": "kW"})
+    home = glance.battery(hass, {"level": "sensor.car_battery", "power": "sensor.wallbox_power", "label": "Home battery"})
+    assert (home["status"], home["text"], home["label"]) == ("discharging", "Discharging · 1.4 kW", "Home battery")
+    assert glance.battery(hass, {}) is None
+    face = faces.settings({"layout": "battery", "battery": spec})
+    assert faces.glance_raw(face, {})["battery"]["level"] == "sensor.car_battery"
