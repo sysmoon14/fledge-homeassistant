@@ -322,7 +322,8 @@ data:
 
 Writing the heating schedule turns the Nest's Auto-Schedule off, as any edit of
 its schedule does, and sets the temperature that applies now unless the Nest is
-in Eco.
+in Eco or Home Assistant is deciding when it heats (the Nest then takes the new
+schedule up itself when Home Assistant stops asking).
 
 ## Updates
 

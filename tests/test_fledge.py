@@ -733,6 +733,29 @@ async def test_eco_keeps_its_temperature(hass: HomeAssistant, mqtt_mock) -> None
     assert not set_temperature
 
 
+async def test_heat_control_keeps_the_target_while_the_schedule_is_aside(hass: HomeAssistant, mqtt_mock) -> None:
+    """Hearth rewrites the backup schedule while it asks for heat: setting the
+    target then would be a turn of the dial, shutting Hearth out for hours."""
+    await _with_schedules(hass)
+    er.async_get(hass).async_get_or_create("sensor", "mqtt", f"nestlocal_{SERIAL.lower()}_heat_control_phase",
+                                           device_id=_thermostat(hass).id,
+                                           suggested_object_id="nest_thermostat_heating_control")
+    hass.states.async_set("climate.nest_thermostat", "heat", {"temperature": 30, "preset_mode": "none"})
+    set_temperature = async_mock_service(hass, "climate", "set_temperature")
+    allday = {d: [{"time": "00:00", "temp": 19}] for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    for phase in ("heating", "idle", "dial"):
+        hass.states.async_set("sensor.nest_thermostat_heating_control", phase)
+        await hass.services.async_call(DOMAIN, "set_schedule", {
+            "entity_id": "climate.nest_thermostat", "heating": allday}, blocking=True)
+        assert not set_temperature, phase
+    assert len(_sent(mqtt_mock, f"nestlocal/{SERIAL}/set/heating_times")) == 3, "the schedule is still written"
+    # The Nest's own again: what applies now is set now.
+    hass.states.async_set("sensor.nest_thermostat_heating_control", "on_its_own")
+    await hass.services.async_call(DOMAIN, "set_schedule", {
+        "entity_id": "climate.nest_thermostat", "heating": allday}, blocking=True)
+    assert [c.data["temperature"] for c in set_temperature] == [19]
+
+
 async def test_a_schedule_the_nest_would_refuse_is_refused_here(hass: HomeAssistant, mqtt_mock) -> None:
     import pytest
     import voluptuous as vol
@@ -768,7 +791,8 @@ async def test_the_cards_find_the_nest_s_schedules(hass: HomeAssistant, mqtt_moc
     assert (await client.receive_json())["result"] == {
         "serial": SERIAL, "climate": "climate.nest_thermostat", "heating": "sensor.nest_thermostat_heating_times",
         "hot_water": "sensor.nest_thermostat_hot_water_times",
-        "hot_water_switch": "switch.nest_thermostat_hot_water_schedule", "auto_schedule": None}
+        "hot_water_switch": "switch.nest_thermostat_hot_water_schedule", "auto_schedule": None,
+        "heat_control": None}
     await client.send_json_auto_id({"type": "fledge/schedule", "entity_id": "climate.elsewhere"})
     assert (await client.receive_json())["error"]["code"] == "not_found"
 

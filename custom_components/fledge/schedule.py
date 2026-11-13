@@ -36,7 +36,11 @@ SETPOINT = (4.5, 35.0)
 MOST = 12
 # The thermostat's entities, by the end of their unique ids (nestlocal_<serial>_...).
 OWN = {"climate": "climate", "heating": "heating_times", "hot_water": "hot_water_times",
-       "hot_water_switch": "hot_water_schedule", "auto_schedule": "learning_mode"}
+       "hot_water_switch": "hot_water_schedule", "auto_schedule": "learning_mode",
+       "heat_control": "heat_control_phase"}
+# Heat control phases (nestlocal demand.rs) in which the Nest's schedule is
+# kept aside: Home Assistant decides, or the dial holds until its next change.
+SCHEDULE_ASIDE = ("heating", "idle", "dial")
 
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -144,7 +148,13 @@ async def async_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
 async def _apply_now(hass: HomeAssistant, own: dict[str, str | None], changed: dict[str, Any]) -> None:
     """The Nest reads a changed schedule only at its next scheduled change:
     the setpoint that applies now, set now. Not while in Eco (away, or a
-    holiday) or off."""
+    holiday) or off, and not while heat control has the schedule aside: the
+    Nest takes it up again itself when Home Assistant stops asking, and a
+    target set now would be a turn of the dial that shuts Home Assistant out
+    until the schedule's next change."""
+    phase = hass.states.get(own["heat_control"]) if own["heat_control"] else None
+    if phase is not None and phase.state in SCHEDULE_ASIDE:
+        return
     climate = hass.states.get(own["climate"]) if own["climate"] else None
     sensor = hass.states.get(own[HEATING]) if own[HEATING] else None
     if climate is None or climate.state != "heat" or climate.attributes.get("preset_mode") not in (None, "none"):
