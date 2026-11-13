@@ -900,13 +900,11 @@ const HEAT_PHASES = {
   on_its_own: "On, nothing asking: the Nest runs its own schedule",
   heating: "Home Assistant is calling for heat",
   idle: "Home Assistant wants no heat",
-  dial: "Set on the Nest for now",
 };
 // Why the Nest is heating or not, as its status card says it (model.rs Asked::reason).
-function heatReason(phase, rooms, until) {
+function heatReason(phase, rooms) {
   if (phase === "heating") return !rooms.length ? "Heat wanted" : rooms.length === 1 ? `${rooms[0]} wants heat` : `${rooms.length} rooms want heat`;
   if (phase === "idle") return "No rooms want heat";
-  if (phase === "dial") return until ? `Set on the Nest until ${until}` : "Set on the Nest";
   return "On its own schedule";
 }
 // The next "HH:MM" after `clock` among a day's hot water periods ({on, off}).
@@ -1284,10 +1282,8 @@ class FledgePanel extends HTMLElement {
     let asked = null;
     let water = null;
     const phase = state("_heat_control_phase");
-    if (phase && ["heating", "idle", "dial", "on_its_own"].includes(phase.state)) {
-      const until = Date.parse(phase.attributes.dial_until || "");
-      const hhmm = until ? new Date(until).toTimeString().slice(0, 5) : null;
-      asked = { phase: phase.state, reason: heatReason(phase.state, phase.attributes.rooms || [], hhmm) };
+    if (phase && ["heating", "idle", "on_its_own"].includes(phase.state)) {
+      asked = { phase: phase.state, reason: heatReason(phase.state, phase.attributes.rooms || []) };
       const schedule = state("_hot_water_schedule", "switch");
       if (schedule) {
         const active = state("_hot_water_active", "binary_sensor") || state("_hot_water", "binary_sensor");
@@ -2198,11 +2194,10 @@ class FledgePanel extends HTMLElement {
     const asking = call && this._hass.states[call];
     const rooms = asking?.attributes.rooms || [];
     const status = phase && HEAT_PHASES[phase.state];
-    const until = phase?.attributes.dial_until && new Date(phase.attributes.dial_until).toTimeString().slice(0, 5);
-    return `<div class="kv"><span>Heating control by Home Assistant<span class="sub">${on ? esc(status || "On") : "Off: the Nest decides when to heat"}${on && phase?.state === "dial" && until ? ` until ${esc(until)}` : ""}</span></span>${this._switch("heatctl", on, "Heating control by Home Assistant")}</div>
+    return `<div class="kv"><span>Heating control by Home Assistant<span class="sub">${on ? esc(status || "On") : "Off: the Nest decides when to heat"}</span></span>${this._switch("heatctl", on, "Heating control by Home Assistant")}</div>
       ${on && call ? `<div class="kv"><span class="muted">Call for heat<span class="sub">${asking?.state === "on" ? esc(rooms.length ? `Asking for ${rooms.join(", ")}` : "Asking for heat") : "Not asking"}</span></span><span class="mono small">${esc(call)}</span></div>` : ""}
       <p class="muted small">${on
-        ? "Your automations, valves or zoning decide when to heat by turning the Call for heat switch on and off. If Home Assistant stops asking for 10 minutes, the Nest goes back to its own schedule. A change on the Nest's dial holds until its schedule's next change."
+        ? "Your automations, valves or zoning decide when to heat by turning the Call for heat switch on and off. The Call for heat switch is the only say: a temperature set on the Nest's dial or its climate entity is put back. If Home Assistant stops asking for 10 minutes, the Nest goes back to its own schedule."
         : "For radiator valves or zoning in Home Assistant: the Nest only fires the boiler when Home Assistant's Call for heat switch asks it to. Its schedule waits aside and comes back if Home Assistant stops asking."}</p>`;
   }
 

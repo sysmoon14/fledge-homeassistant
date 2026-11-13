@@ -39,8 +39,8 @@ OWN = {"climate": "climate", "heating": "heating_times", "hot_water": "hot_water
        "hot_water_switch": "hot_water_schedule", "auto_schedule": "learning_mode",
        "heat_control": "heat_control_phase"}
 # Heat control phases (nestlocal demand.rs) in which the Nest's schedule is
-# kept aside: Home Assistant decides, or the dial holds until its next change.
-SCHEDULE_ASIDE = ("heating", "idle", "dial")
+# kept aside: Home Assistant's Call for heat decides.
+SCHEDULE_ASIDE = ("heating", "idle")
 
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -149,9 +149,8 @@ async def _apply_now(hass: HomeAssistant, own: dict[str, str | None], changed: d
     """The Nest reads a changed schedule only at its next scheduled change:
     the setpoint that applies now, set now. Not while in Eco (away, or a
     holiday) or off, and not while heat control has the schedule aside: the
-    Nest takes it up again itself when Home Assistant stops asking, and a
-    target set now would be a turn of the dial that shuts Home Assistant out
-    until the schedule's next change."""
+    Nest takes it up again itself when Home Assistant stops asking, and
+    until then its target is Call for heat's alone."""
     phase = hass.states.get(own["heat_control"]) if own["heat_control"] else None
     if phase is not None and phase.state in SCHEDULE_ASIDE:
         return

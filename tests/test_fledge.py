@@ -734,8 +734,8 @@ async def test_eco_keeps_its_temperature(hass: HomeAssistant, mqtt_mock) -> None
 
 
 async def test_heat_control_keeps_the_target_while_the_schedule_is_aside(hass: HomeAssistant, mqtt_mock) -> None:
-    """Hearth rewrites the backup schedule while it asks for heat: setting the
-    target then would be a turn of the dial, shutting Hearth out for hours."""
+    """A schedule written while Call for heat decides goes to the one kept
+    aside: the target is Call for heat's alone, so it isn't set now."""
     await _with_schedules(hass)
     er.async_get(hass).async_get_or_create("sensor", "mqtt", f"nestlocal_{SERIAL.lower()}_heat_control_phase",
                                            device_id=_thermostat(hass).id,
@@ -743,12 +743,12 @@ async def test_heat_control_keeps_the_target_while_the_schedule_is_aside(hass: H
     hass.states.async_set("climate.nest_thermostat", "heat", {"temperature": 30, "preset_mode": "none"})
     set_temperature = async_mock_service(hass, "climate", "set_temperature")
     allday = {d: [{"time": "00:00", "temp": 19}] for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
-    for phase in ("heating", "idle", "dial"):
+    for phase in ("heating", "idle"):
         hass.states.async_set("sensor.nest_thermostat_heating_control", phase)
         await hass.services.async_call(DOMAIN, "set_schedule", {
             "entity_id": "climate.nest_thermostat", "heating": allday}, blocking=True)
         assert not set_temperature, phase
-    assert len(_sent(mqtt_mock, f"nestlocal/{SERIAL}/set/heating_times")) == 3, "the schedule is still written"
+    assert len(_sent(mqtt_mock, f"nestlocal/{SERIAL}/set/heating_times")) == 2, "the schedule is still written"
     # The Nest's own again: what applies now is set now.
     hass.states.async_set("sensor.nest_thermostat_heating_control", "on_its_own")
     await hass.services.async_call(DOMAIN, "set_schedule", {

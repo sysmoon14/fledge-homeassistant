@@ -257,7 +257,7 @@ actions:
       heat: "{{ is_state_attr('climate.office_trv', 'hvac_action', 'heating') or is_state_attr('climate.bedroom_trv', 'hvac_action', 'heating') }}"
 ```
 
-`rooms` (a list of names) is optional and shows on the Nest ("Heating for Office"). The integration renews the ask every minute. If Home Assistant stops, the Nest goes back to its own schedule by itself after ten minutes, and turning its dial always works. See [Home Assistant calls for heat](https://sysmoon14.github.io/fledge/docs/thermostat.html#call-for-heat).
+`rooms` (a list of names) is optional and shows on the Nest ("Heating for Office"). The integration renews the ask every minute. While it asks, the switch is the only say: a temperature or mode set on the Nest or its climate entity is put back. If Home Assistant stops, the Nest goes back to its own schedule by itself after ten minutes. See [Home Assistant calls for heat](https://sysmoon14.github.io/fledge/docs/thermostat.html#call-for-heat).
 
 ## Weather and temperature
 
