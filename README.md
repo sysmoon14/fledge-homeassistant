@@ -55,8 +55,9 @@ sends it. Alarm cards need the thermostat on Fledge v0.7.0 or later.
 thermostat's temperature, the Nest's own card included, a speaker's volume, a
 cover's position, a light's brightness and warmth), set on its card in the panel. The ring's ends become
 the limits and the card says *At your limit* there; Home Assistant itself can
-still set anything. Each end can be firm, or **pushed past**: three clicks
-light its arrows, the fourth goes through, and the ring turns amber past it.
+still set anything. Each end can be firm, or **pushed past**: a turn stops at
+the limit, and a fresh turn after letting go goes through on its sixth click,
+the ring turning amber past it.
 See [Ring limits](https://sysmoon14.github.io/fledge/docs/cards.html#limits).
 
 **Face cards.** A card can be a glance face of its own (a clock, the weather, a
