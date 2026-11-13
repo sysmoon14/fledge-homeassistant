@@ -71,3 +71,18 @@ set_schedule:
       example: '{"mon": [{"on": "06:00", "off": "08:00"}], "sat": []}'
       selector:
         object:
+call_for_heat:
+  target:
+    entity:
+      integration: fledge
+      domain: switch
+  fields:
+    heat:
+      required: true
+      selector:
+        boolean:
+    rooms:
+      example: '["Office", "Snug"]'
+      selector:
+        text:
+          multiple: true

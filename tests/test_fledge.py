@@ -607,7 +607,7 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     shown = found[0]
     assert (shown["entry_id"], shown["serial"], shown["climate"], shown["loaded"]) == \
         (entry.entry_id, SERIAL, "climate.nest_thermostat", True)
-    assert set(shown["entities"]) == {"keep_screen_on", "wake_to", "wake_screen", "across_the_room", "close_up",
+    assert set(shown["entities"]) == {"keep_screen_on", "call_for_heat", "wake_to", "wake_screen", "across_the_room", "close_up",
                                       "glance_layout", "night_glance"}
 
     await client.send_json_auto_id({"type": "fledge/preview", "entities": ["light.lamp", "light.gone"],
@@ -1360,3 +1360,39 @@ def test_the_nest_s_own_card_takes_limits_too():
     nest = State("climate.nest", "heat", temperature=20, min_temp=9, max_temp=32, target_temp_step=0.5)
     card = cards.climate(nest, options["limits"][own])
     assert (card["min"], card["max"], card["temperature_whole"]) == (16, 24, [9, 32])
+
+
+async def test_call_for_heat_asks_while_heating_control_is_home_assistant_s(hass: HomeAssistant, mqtt_mock,
+                                                                             freezer) -> None:
+    from datetime import timedelta
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    [switch] = [e for e in hass.states.async_entity_ids("switch") if e.endswith("call_for_heat")]
+    topic = f"nestlocal/{SERIAL}/set/call_for_heat"
+    asks = lambda: [json.loads(c.args[1]) for c in mqtt_mock.async_publish.call_args_list if c.args[0] == topic]
+
+    assert hass.states.get(switch).state == "unavailable", "the Nest decides"
+    async_fire_mqtt_message(hass, f"nestlocal/{SERIAL}/state", json.dumps({"heat_control": True,
+                                                                             "heat_control_phase": "on_its_own"}))
+    await hass.async_block_till_done()
+    assert hass.states.get(switch).state == "off"
+    assert asks()[-1] == {"heat": False, "lease": 600, "rooms": []}, "asked at once"
+
+    await hass.services.async_call(DOMAIN, "call_for_heat", {"entity_id": switch, "heat": True, "rooms": ["Office"]},
+                                   blocking=True)
+    assert asks()[-1] == {"heat": True, "lease": 600, "rooms": ["Office"]}
+    assert hass.states.get(switch).attributes["rooms"] == ["Office"]
+
+    n = len(asks())
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert len(asks()) == n + 1 and asks()[-1]["heat"], "renewed every minute"
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": switch}, blocking=True)
+    assert asks()[-1] == {"heat": False, "lease": 600, "rooms": []}

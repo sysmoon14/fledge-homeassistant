@@ -155,3 +155,10 @@ ALARM_RESULT_TOPIC = "{prefix}/{serial}/set/alarm_result"
 # A media player's album art (retained; empty for none).
 ART_TOPIC = "{prefix}/{serial}/set/art/{entity}"
 
+# Heating control by Home Assistant (nestlocal's demand.rs): the thermostat's
+# state says whether it's on; an ask holds for ASK_LEASE seconds and is sent
+# again every ASK_EVERY while the Call for heat switch is used.
+STATE_TOPIC = "{prefix}/{serial}/state"
+CALL_FOR_HEAT_TOPIC = "{prefix}/{serial}/set/call_for_heat"
+ASK_LEASE = 600
+ASK_EVERY = 60
