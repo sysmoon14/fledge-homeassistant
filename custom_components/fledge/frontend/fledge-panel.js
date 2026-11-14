@@ -913,6 +913,10 @@ class FledgePanel extends HTMLElement {
     this.shadowRoot.addEventListener("dragover", (e) => this._dragOver(e));
     this.shadowRoot.addEventListener("drop", (e) => this._dropped(e));
     this.shadowRoot.addEventListener("dragend", () => this._dragEnd());
+    // A redraw held while a picker was in use: drawn once it's left.
+    this.shadowRoot.addEventListener("focusout", () => setTimeout(() => {
+      if (this._held && !this._picking()) this._render();
+    }));
   }
 
   set hass(hass) {
@@ -1284,9 +1288,27 @@ class FledgePanel extends HTMLElement {
 
   // Rendering
 
+  // A picker of Home Assistant's (entity, icon) with the focus: open, or
+  // being typed in. Drawing the page again would throw it away.
+  _picking() {
+    const at = this.shadowRoot.activeElement;
+    return !!at && /^HA-.*PICKER$/.test(at.tagName);
+  }
+
+  // Lets go of a picker after its choice, so the page can be drawn again.
+  _letGo() {
+    let at = this.shadowRoot.activeElement;
+    while (at?.shadowRoot?.activeElement) at = at.shadowRoot.activeElement;
+    at?.blur?.();
+  }
+
   _render() {
     // Not while a row is dragged: that would drop it. Drawn as it lands.
     if (!this._hass || this._drag != null) return;
+    // Nor while a picker is in use: entities change all the time, and each
+    // redraw closed its list (#7). Drawn once it's left.
+    this._held = this._picking();
+    if (this._held) return;
     const t = this._current;
     let body;
     if (!this._thermostats) body = `<div class="empty">Loading…</div>`;
@@ -2635,6 +2657,7 @@ class FledgePanel extends HTMLElement {
     const key = e.target?.dataset?.pick;
     if (!key) return;
     e.stopPropagation();
+    this._letGo();
     this._choose(key, e.detail?.value || "");
   }
 
