@@ -149,6 +149,9 @@
     "switch": {
       "keep_screen_on": {
         "name": "Keep screen on"
+      },
+      "call_for_heat": {
+        "name": "Call for heat"
       }
     },
     "button": {
@@ -234,6 +237,20 @@
         "hot_water": {
           "name": "Hot water",
           "description": "Days to replace (mon to sun), each a list of on periods with an on and an off time (HH:MM). See the README for an example."
+        }
+      }
+    },
+    "call_for_heat": {
+      "name": "Call for heat",
+      "description": "While the thermostat's heating control is Home Assistant's, ask it to fire the boiler (heat on) or not (heat off), naming the rooms asking if you like. The ask is renewed every minute; if Home Assistant stops, the thermostat goes back to its own schedule.",
+      "fields": {
+        "heat": {
+          "name": "Heat",
+          "description": "Whether heat is wanted."
+        },
+        "rooms": {
+          "name": "Rooms",
+          "description": "The rooms asking, shown on the thermostat."
         }
       }
     }

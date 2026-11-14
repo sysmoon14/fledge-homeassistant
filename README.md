@@ -239,6 +239,26 @@ automation:
           entity_id: lock.back_door
 ```
 
+## Let Home Assistant call for heat
+
+With radiator valves (or anything else that knows which rooms need heat), the Nest can leave the decision to Home Assistant and just fire the boiler. Turn on the thermostat's **Heating control by Home Assistant** switch; the **Call for heat** switch then becomes available. On asks the Nest to heat, off asks it not to:
+
+```yaml
+alias: Boiler follows the radiator valves
+triggers:
+  - trigger: state
+    entity_id: [climate.office_trv, climate.bedroom_trv]
+    attribute: hvac_action
+actions:
+  - action: fledge.call_for_heat
+    target:
+      entity_id: switch.nest_thermostat_call_for_heat
+    data:
+      heat: "{{ is_state_attr('climate.office_trv', 'hvac_action', 'heating') or is_state_attr('climate.bedroom_trv', 'hvac_action', 'heating') }}"
+```
+
+`rooms` (a list of names) is optional and shows on the Nest ("Heating for Office"). The integration renews the ask every minute. While it asks, the switch is the only say: a temperature or mode set on the Nest or its climate entity is put back. If Home Assistant stops, the Nest goes back to its own schedule by itself after ten minutes. See [Home Assistant calls for heat](https://sysmoon14.github.io/fledge/docs/thermostat.html#call-for-heat).
+
 ## Weather and temperature
 
 The weather entity you pick (in the panel's **Thermostat** tab, or the
@@ -302,7 +322,8 @@ data:
 
 Writing the heating schedule turns the Nest's Auto-Schedule off, as any edit of
 its schedule does, and sets the temperature that applies now unless the Nest is
-in Eco.
+in Eco or Home Assistant is deciding when it heats (the Nest then takes the new
+schedule up itself when Home Assistant stops asking).
 
 ## Updates
 
