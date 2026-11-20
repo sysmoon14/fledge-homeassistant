@@ -1,10 +1,12 @@
 """What the Nest hears from Home Assistant besides its cards: the weather
-outside, for its own weather screen, and a room's temperature to regulate
-from. They replace the Nest weather and external temperature blueprints.
+outside, for its own weather screen, a room's temperature to regulate
+from, and the time zone to show the time in. They replace the Nest weather
+and external temperature blueprints.
 
 nestlocal takes °C (commands.rs): outdoor_temperature and outdoor_humidity
 as numbers, weather as Home Assistant's forecasts in JSON, and
-external_temperature as a number while it runs with -external-temperature.
+external_temperature as a number while it runs with -external-temperature;
+time_zone as an IANA name (time_zone.rs).
 """
 
 from __future__ import annotations
@@ -16,14 +18,14 @@ from datetime import timedelta
 from typing import Any
 
 from homeassistant.components import mqtt
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, UnitOfTemperature
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from .config_flow import thermostats
 from .const import (DOCS, CONF_OUTDOOR, CONF_ROOM_SENSOR, CONF_WEATHER, DOMAIN, HUMIDITY_TOPIC, OUTDOOR_TOPIC, ROOM_TOPIC,
-                    TOPIC_PREFIX, WEATHER_TOPIC)
+                    TIME_ZONE_TOPIC, TOPIC_PREFIX, WEATHER_TOPIC)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -164,6 +166,8 @@ class Feeds:
         return f"room_sensor_{self.serial}"
 
     async def async_start(self) -> None:
+        self._unsubscribe.append(self.hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, self._config_changed))
+        await self.async_send_time_zone()
         if self.weather or self.thermometer:
             watched = [e for e in (self.weather, self.thermometer) if e]
             self._unsubscribe.append(async_track_state_change_event(self.hass, watched, self._outside_changed))
@@ -188,6 +192,17 @@ class Feeds:
             return
         self._sent[topic] = payload
         await mqtt.async_publish(self.hass, topic, payload, retain=retain)
+
+    # The time zone.
+
+    @callback
+    def _config_changed(self, _event: Event) -> None:
+        self.hass.async_create_task(self.async_send_time_zone())
+
+    async def async_send_time_zone(self) -> None:
+        """Home Assistant's own; the Nest reboots only when it changes."""
+        if self.hass.config.time_zone:
+            await self._publish(self._topic(TIME_ZONE_TOPIC), self.hass.config.time_zone, retain=True)
 
     # Outside.
 

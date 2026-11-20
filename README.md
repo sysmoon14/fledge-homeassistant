@@ -271,6 +271,12 @@ temperature and humidity, and the forecast, every 15 minutes. Pick an outside
 thermometer as well to use its temperature instead of the forecast's. This
 replaces the Nest weather blueprint.
 
+**Time zone:** the Nest shows the time in Home Assistant's time zone (Settings →
+System → General). Without the Nest service it would keep the zone it last had,
+or was configured before. The first time, and whenever you change the zone, the Nest
+reboots into it, so its heating pauses for about a minute. The Nest uses its
+own time zone rules, from around 2020.
+
 **Room thermometer:** the Nest regulates from a Home Assistant sensor instead
 of its own, in °C or °F, and goes back to its own if the readings stop for 30
 minutes. The Nest needs Fledge's external temperature option for this, which

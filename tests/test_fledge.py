@@ -883,6 +883,25 @@ def _source(hass: HomeAssistant, thermostat: dr.DeviceEntry, domain: str, end: s
                                                   device_id=thermostat.id, suggested_object_id=object_id).entity_id
 
 
+async def test_the_nest_shows_the_time_in_home_assistant_s_time_zone(hass: HomeAssistant, mqtt_mock) -> None:
+    await hass.config.async_set_time_zone("Europe/Amsterdam")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
+                            options={"entities": [], "wake": "chooser"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    sent = lambda: [(c.args[1], c.args[3]) for c in mqtt_mock.async_publish.call_args_list
+                    if c.args[0] == f"nestlocal/{SERIAL}/set/time_zone"]
+    assert sent() == [("Europe/Amsterdam", True)], "retained, so a restarted nestlocal has it"
+
+    await hass.config.async_update(location_name="Home")
+    await hass.async_block_till_done()
+    assert len(sent()) == 1, "unchanged: not sent again (a new zone reboots the Nest)"
+    await hass.config.async_update(time_zone="Europe/London")
+    await hass.async_block_till_done()
+    assert sent()[-1] == ("Europe/London", True)
+
+
 async def test_the_weather_reaches_the_nest_s_own_screen(hass: HomeAssistant, mqtt_mock) -> None:
     from homeassistant.core import SupportsResponse
     _thermostat(hass)
