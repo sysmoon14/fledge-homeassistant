@@ -159,9 +159,14 @@ def _thermostat(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
 @websocket_api.require_admin
 @callback
 def ws_thermostats(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """The thermostats set up, and what can be a card."""
+    """The thermostats set up, and what can be a card.
+
+    A dismissed discovery is an entry with no serial. Including it makes
+    the first one fail this list, and the panel says there is no thermostat.
+    """
     connection.send_result(msg["id"], {
-        "thermostats": [_thermostat(hass, entry) for entry in hass.config_entries.async_entries(DOMAIN)],
+        "thermostats": [_thermostat(hass, entry) for entry in
+                        hass.config_entries.async_entries(DOMAIN, include_ignore=False)],
         "domains": DOMAINS,
     })
 

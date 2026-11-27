@@ -628,6 +628,9 @@ async def test_the_panel_lays_out_the_cards_and_saves_them(hass: HomeAssistant, 
     entry = MockConfigEntry(domain=DOMAIN, unique_id=SERIAL, data={"serial": SERIAL},
                             options={"entities": ["light.lamp"], "wake": "chooser"})
     entry.add_to_hass(hass)
+    # A dismissed discovery: no data, and it must not be offered as a thermostat.
+    MockConfigEntry(domain=DOMAIN, unique_id="09AB01AC00000000", title="Nest 09AB01AC00000000",
+                    source=config_entries.SOURCE_IGNORE).add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert hass.data[DATA_PANELS]["fledge"].require_admin, "in the sidebar, for admins"
